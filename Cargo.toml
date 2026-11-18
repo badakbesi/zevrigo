@@ -1,0 +1,119 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/primitives",
+    "crates/crypto",
+    "crates/pow",
+    "crates/consensus",
+    "crates/storage",
+    "crates/network",
+    "crates/mempool",
+    "crates/rpc",
+    "crates/wallet-core",
+    "crates/merchant-core",
+    "apps/node",
+    "apps/cli",
+    "apps/miner",
+    "tests/integration",
+]
+# DEC-01: salinan randomx-rs + RandomX dengan salt ZVRG (vendor/README.md), dipakai lewat [patch.crates-io], bukan anggota.
+exclude = ["vendor"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99.0"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+zevrigo-primitives = { path = "crates/primitives" }
+zevrigo-crypto = { path = "crates/crypto" }
+zevrigo-pow = { path = "crates/pow" }
+zevrigo-consensus = { path = "crates/consensus" }
+zevrigo-storage = { path = "crates/storage" }
+zevrigo-network = { path = "crates/network" }
+zevrigo-mempool = { path = "crates/mempool" }
+zevrigo-rpc = { path = "crates/rpc" }
+zevrigo-wallet-core = { path = "crates/wallet-core" }
+zevrigo-merchant-core = { path = "crates/merchant-core" }
+thiserror = "2.0.21"
+proptest = "1.12.0"
+blake3 = "1.8.7"
+k256 = { version = "0.13.4", default-features = false }
+# DEC-10 bagian 4: hanya MOD-09 wallet-core (BIP39 dan BIP32); `sha2` juga dipakai repo aplikasi (MOD-14, MOD-18) dengan versi sama.
+# Seri digest 0.10, sama dengan k256.
+sha2 = { version = "0.10.9", default-features = false }
+hmac = { version = "0.12.1", default-features = false }
+pbkdf2 = { version = "0.12.2", default-features = false, features = ["hmac"] }
+# DEC-27 (DEC-10 bagian 8): enkripsi file wallet, hanya MOD-09 (argon2, chacha20poly1305, zeroize) dan MOD-12
+# (rpassword, zeroize). Seri digest 0.10 seperti k256: chacha20poly1305 0.10.1, blake2 0.10.6, dan zeroize 1.9.1
+# sudah ada di Cargo.lock lewat libp2p dan k256. Fitur ditambah di crate.
+argon2 = { version = "0.5.3", default-features = false }
+chacha20poly1305 = { version = "0.10.1", default-features = false }
+zeroize = { version = "1.9.1", default-features = false }
+rpassword = { version = "7.5.4", default-features = false }
+# DEC-10 bagian 11 (DEC-31): sumber acak sistem operasi untuk MOD-12 (entropi frasa, salt, nonce, aux_rand), agar CLI
+# dan wallet desktop berjalan di Windows (sebelumnya /dev/urandom). Versi 0.3.4 sudah ada di Cargo.lock.
+getrandom = { version = "0.3.4", default-features = false }
+redb = { version = "4.4.0", default-features = false, features = ["std"] }
+# DEC-10 bagian 2: hanya untuk crate di luar konsensus (network, rpc, aplikasi). Fitur ditambah per crate.
+tokio = { version = "1.54.1", default-features = false }
+jsonrpsee = { version = "0.26.1", default-features = false }
+jsonrpsee-http-client = { version = "0.26.1", default-features = false }
+# DEC-10 bagian 14 (TSK-M60): fitur `tls` jsonrpsee-http-client di MOD-08 menambah 11 paket (hyper-rustls, tokio-rustls,
+# rustls-platform-verifier + -android, rustls-native-certs, openssl-probe, schannel, security-framework + -sys,
+# webpki-root-certs 0.26 dan 1.0); docs/reference/paket-mod08-tls-v0.1.txt.
+serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
+serde_json = { version = "1.0.154", default-features = false, features = ["std"] }
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["std", "fmt"] }
+# DEC-10 bagian 5 (DEC-24): hanya MOD-06 network. Noise membawa ring (C dan assembly). Fitur ditambah di crate.
+# DEC-10 bagian 12 (DEC-33): fitur `websocket` di MOD-06 menambah 6 paket (libp2p-websocket, futures-rustls, rustls dengan
+# ring, rustls-pki-types, rustls-webpki, webpki-roots); docs/reference/paket-mod06-websocket-v0.1.txt.
+libp2p = { version = "0.57.1", default-features = false }
+# Fitur `tokio` libp2p tidak dipakai: isinya rujukan lemah (`libp2p-quic?/tokio`, dns, mdns, upnp) yang membuat Cargo.lock
+# memuat QUIC, TLS, dan DNS. Runtime tokio diaktifkan langsung di dua sub-paket resmi ini (versi sama dengan libp2p 0.57.1).
+libp2p-swarm = { version = "0.48.0", default-features = false }
+libp2p-tcp = { version = "0.45.0", default-features = false }
+# DEC-39 (18 November 2026): dependensi khusus aplikasi (axum, rusqlite, tauri, tauri-build, rustls-platform-verifier;
+# DEC-10 bagian 6, 11, 13, 14) diatur di Cargo.toml repo aplikasinya dengan versi yang disetujui. Repo inti tidak memakainya.
+# DEC-01 (DEC-10 bagian 10): hanya MOD-03 pow. randomx-rs membangun kode C++ resmi RandomX lewat cmake (butuh program
+# cmake dan compiler C++). Salt Argon2 masih nilai resmi sampai TSK-M06 bagian C.
+randomx-rs = { version = "1.6.0", default-features = false }
+
+# DEC-01 (Konsep Bagian 5.10 dan L5): randomx-rs dibangun dari salinan di repo, satu-satunya perubahan algoritma adalah
+# salt Argon2 RandomX ("RandomZVRG\x01"). Lihat vendor/README.md.
+[patch.crates-io]
+randomx-rs = { path = "vendor/randomx-rs" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "warn"
+dbg_macro = "deny"
+float_arithmetic = "deny"
+float_cmp = "deny"
+float_cmp_const = "deny"
+lossy_float_literal = "deny"
+cast_precision_loss = "deny"
+imprecise_flops = "deny"
+suboptimal_flops = "deny"
+
+# DEC-27: Argon2id dan BLAKE2 di dalamnya dioptimalkan juga di profil dev dan test, agar uji wallet dengan parameter
+# Argon2id penuh (64 MiB) tidak lambat. Tidak mengubah Cargo.lock maupun build rilis.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
+# DEC-01: kode C++ RandomX (build script randomx-rs, CMake RelWithDebInfo) dioptimalkan juga di profil dev dan test, agar
+# cache 256 MiB dan hash di test tidak lambat. Tidak mengubah Cargo.lock maupun build rilis.
+[profile.dev.package.randomx-rs]
+opt-level = 3

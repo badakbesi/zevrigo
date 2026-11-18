@@ -1,0 +1,32 @@
+[package]
+name = "zevrigo-integration-tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+zevrigo-consensus.workspace = true
+zevrigo-crypto.workspace = true
+zevrigo-mempool.workspace = true
+zevrigo-merchant-core.workspace = true
+zevrigo-network.workspace = true
+zevrigo-pow.workspace = true
+zevrigo-primitives.workspace = true
+zevrigo-rpc.workspace = true
+zevrigo-storage.workspace = true
+zevrigo-wallet-core.workspace = true
+
+[dev-dependencies]
+# DEC-20 dan DEC-23: aplikasi inti hanya untuk uji ujung ke ujung (FTR-02 sampai FTR-04), tidak pernah
+# sebagai dependensi biasa. Dirujuk lewat path, bukan [workspace.dependencies], agar daftar dependensi workspace tetap hanya
+# berisi pustaka inti dan crate lain tidak bisa memakai aplikasi dengan `.workspace = true`.
+zevrigo-cli = { path = "../../apps/cli" }
+zevrigo-miner = { path = "../../apps/miner" }
+zevrigo-node = { path = "../../apps/node" }
+# FTR-05 (explorer) diuji di repo zevrigo-explorer sejak 18 November 2026 (DEC-39).
+tokio = { workspace = true, features = ["rt-multi-thread", "sync"] }
+
+[lints]
+workspace = true

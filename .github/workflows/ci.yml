@@ -1,0 +1,50 @@
+# Asumsi platform CI: GitHub Actions.
+# Jika repositori dipindahkan ke platform Git lain (GitLab CI, Codeberg/Forgejo, dsb.),
+# sesuaikan berkas workflow ini dengan runner Ubuntu yang menjalankan `make check-all`.
+# Repo inti saja (DEC-39): aplikasi punya CI di repo masing-masing.
+
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check (fmt, lint, forbidden, test)
+    # Image runner dikunci (ubuntu-latest pindah ke Ubuntu 26 sejak 19 Okt 2026).
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Toolchain dari rust-toolchain.toml (1.99.0 + rustfmt + clippy) lewat rustup bawaan runner. Sebelumnya
+      # dtolnay/rust-toolchain@master tanpa input `toolchain` selalu gagal (exit 1).
+      - name: Install pinned Rust toolchain (rust-toolchain.toml)
+        run: |
+          rustup --version
+          rustup toolchain install
+          rustc --version
+          cargo --version
+          cargo clippy --version
+          cargo fmt --version
+
+      - name: Cache Cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install system libraries (RandomX build, DEC-01)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake make g++ pkg-config
+
+      - name: Verify locked workspace build
+        run: cargo build --workspace --locked
+
+      - name: Run full verification suite
+        run: make check-all

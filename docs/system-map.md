@@ -1,0 +1,186 @@
+# Peta Sistem Zevrigo Coin (ZVRG)
+
+## Peta repo zevrigo_lab (DEC-39)
+
+Sejak 17 November 2026 proyek terdiri dari lima repo dalam folder induk `zevrigo_lab` (`C:\zevrigo_lab`). Repo inti `zevrigo`
+memegang crate inti, node, CLI, miner, uji integrasi, RandomX ZVRG, dan dokumen inti (termasuk peta ini). Repo aplikasi
+memakai crate inti lewat `path = "../zevrigo/..."` (sementara; kelak dependensi git dengan tag).
+
+| Repo | Isi | Crate inti yang dipakai | Pemeriksaan |
+|---|---|---|---|
+| `zevrigo` | MOD-01..MOD-10, MOD-11 node, MOD-12 cli, MOD-13 miner, MOD-17, `vendor/` RandomX ZVRG, dokumen inti dan indeks DEC/MOD/TSK/FTR semua repo | — | `make check-all` |
+| `zevrigo-wallet` | MOD-15 (`src-tauri/`, antarmuka `src/`) | primitives, wallet-core, cli (DEC-31); dev: rpc | `make check-all`, `make wallet-check` |
+| `zevrigo-explorer` | MOD-14 (akar repo, antarmuka `web/`) | primitives, crypto, consensus, rpc + patch randomx-rs ke `vendor/` inti (DEC-01); dev (uji FTR-05): mempool, storage, wallet-core, node, miner | `make check-all` (termasuk `check-randomx` dan FTR-05), `make web-check` |
+| `zevrigo-demo` | MOD-18 (akar repo); paket Docker dan compose jaringan demo (konteks build folder induk `zevrigo_lab`) | primitives, crypto, rpc, wallet-core (DEC-36) | `make check-all`, `make docker-build` |
+| `zevrigo-blog` | Blog statis Next.js (DEC-37) | — | `make blog-check` |
+
+```mermaid
+graph LR
+    INTI["zevrigo (inti)"]
+    WAL["zevrigo-wallet: MOD-15"]
+    EXP["zevrigo-explorer: MOD-14"]
+    DEM["zevrigo-demo: MOD-18"]
+    BLOG["zevrigo-blog"]
+    WAL -->|primitives, wallet-core, cli| INTI
+    EXP -->|primitives, crypto, consensus, rpc, randomx-rs vendor| INTI
+    DEM -->|primitives, crypto, rpc, wallet-core| INTI
+    DEM -.->|menyajikan hasil build blog| BLOG
+    DEM -.->|image Docker: node, cli, miner| INTI
+    DEM -.->|image Docker: explorer + web| EXP
+```
+
+Uji build terpisah lolos 17 November 2026 (TSK-M66, Q148/Q148b). Sejak 18 November 2026 uji FTR-05 ada di zevrigo-explorer
+(Q150), paket Docker dan compose di zevrigo-demo, dan repo inti tidak lagi memuat salinan aplikasi (Q151).
+
+## Daftar Modul
+
+Legenda: 🟢 selesai · 🟡 berjalan · 🔴 terblokir · ⚪ belum dimulai · ❓ perlu keputusan
+
+> Diperbarui: 18 November 2026 (salinan aplikasi dihapus dari repo inti, Q151; kolom Path memuat repo, DEC-39). Status mengikuti baris **Status** di `docs/modules/MOD-xx-*.md` dan
+> [tasks/README.md](tasks/README.md); dependensi dicocokkan dengan `Cargo.toml` setiap anggota workspace.
+
+| ID | Path | Paket | Fungsi | Bergantung pada | Status |
+|---|---|---|---|---|---|
+| MOD-01 | `crates/primitives` | `zevrigo-primitives` | Tipe dasar: jumlah (u128 quanta), tinggi blok, hash, parameter chain, struktur blok dan transaksi | — | 🟢 |
+| MOD-02 | `crates/crypto` | `zevrigo-crypto` | BLAKE3, Schnorr BIP340, MuSig2 | MOD-01 | 🟡 |
+| MOD-03 | `crates/pow` | `zevrigo-pow` | Proof of Work: antarmuka, PoW dev regtest (DEC-09), RandomX testnet/mainnet (DEC-01, TSK-M06) | MOD-01, 02 (DEC-14) | 🟢 |
+| MOD-04 | `crates/consensus` | `zevrigo-consensus` | Satu-satunya tempat aturan konsensus: pasokan, validasi, ASERT, cap waktu | MOD-01, 02, 03 | 🟢 |
+| MOD-05 | `crates/storage` | `zevrigo-storage` | Penyimpanan blok, set UTXO, pruning | MOD-01 | 🟡 |
+| MOD-06 | `crates/network` | `zevrigo-network` | P2P (rust-libp2p) | MOD-01 | 🟢 |
+| MOD-07 | `crates/mempool` | `zevrigo-mempool` | Antrean transaksi | MOD-01, 04 | 🟢 |
+| MOD-08 | `crates/rpc` | `zevrigo-rpc` | Tipe dan klien/server JSON-RPC | MOD-01 | 🟢 |
+| MOD-09 | `crates/wallet-core` | `zevrigo-wallet-core` | Kunci, penyusunan dan penandatanganan transaksi | MOD-01, 02 | 🟡 |
+| MOD-10 | `crates/merchant-core` | `zevrigo-merchant-core` | Tagihan watch-only, status pembayaran | MOD-01, 09 | ⚪ |
+| MOD-11 | `apps/node` | `zevrigo-node` (bin) | Daemon node | MOD-01, 02, 04, 05, 06, 07, 08 (DEC-19) | 🟢 |
+| MOD-12 | `apps/cli` | `zevrigo-cli` (bin) | Alat baris perintah ke node | MOD-01, 08, 09 (DEC-21) | 🟢 |
+| MOD-13 | `apps/miner` | `zevrigo-miner` (bin) | Penambang CPU | MOD-01, 03, 08 | 🟢 |
+| MOD-14 | repo `zevrigo-explorer` | `zevrigo-explorer` (bin) | Indexer, API, dan antarmuka web Next.js (DEC-26), hanya data sistem (DEC-28) | MOD-01, 02, 04, 08 (DEC-25, DEC-28); dev (uji FTR-05): MOD-05, 07, 09, 11, 13 | 🟡 |
+| MOD-15 | repo `zevrigo-wallet` | `zevrigo-wallet` (bin, `src-tauri/`) | Wallet Tauri 2, desktop Windows dan Android (testnet, regtest; DEC-31) | MOD-01, 09, 12 | 🟡 |
+| MOD-16 | `apps/merchant` | (belum dibuat) | Aplikasi pelaku usaha, Tauri | MOD-08, 10 | ⚪ |
+| MOD-17 | `tests/integration` | `zevrigo-integration-tests` | Uji integrasi lintas crate | semua crate inti; dev: MOD-11, 13 (DEC-20), 12 (DEC-23) | 🟡 |
+| MOD-18 | repo `zevrigo-demo` | `zevrigo-demo` (bin) | Layanan demo regtest: gerbang RPC (TSK-M53), upacara genesis (TSK-M62), faucet, situs statis blog (TSK-M64, DEC-37), pendaftaran (DEC-34, DEC-36) | MOD-01, 02, 08, 09 | 🟡 |
+
+### Sisa pekerjaan modul 🟡 dan ⚪
+
+| Modul | Sisa |
+|---|---|
+| MOD-02 crypto | MuSig2 |
+| MOD-05 storage | Pruning badan blok lama (TSK-M23) |
+| MOD-09 wallet-core | Output jenis 1 kunci waktu (TSK-M50), MuSig2 |
+| MOD-10 merchant-core | Tagihan watch-only dan status pembayaran (TSK-M17); baru kerangka R0 |
+| MOD-14 explorer | Faucet (TSK-M54 sisa), statistik jaringan (TSK-M49), treasury (TSK-M52), APK Explorer (TSK-M57), panduan dan unduh APK (TSK-M59) |
+| MOD-15 wallet | APK Android rilis bertanda tangan (TSK-M58) |
+| MOD-16 merchant | Belum dibuat (DEC-04, DEC-05, DEC-06) |
+| MOD-17 integration-tests | Bertambah mengikuti fitur; FTR-02 sampai FTR-04 diuji ujung ke ujung di sini; FTR-05 di zevrigo-explorer |
+| MOD-18 demo | Mode `daftar` (TSK-M55); blog dan halaman unduh menunggu rilis terbit (TSK-M64) |
+
+Modul 🟢 masih bisa disentuh task demo (misalnya TSK-M48 `get_peer_info` di MOD-06, MOD-08, MOD-11).
+
+## Diagram Dependensi Modul
+
+Panah `A --> B` menunjukkan bahwa modul `A` bergantung pada modul `B` (sesuai kolom "Bergantung pada").
+
+```mermaid
+graph LR
+    MOD01["MOD-01 primitives"]
+    MOD02["MOD-02 crypto"]
+    MOD03["MOD-03 pow"]
+    MOD04["MOD-04 consensus"]
+    MOD05["MOD-05 storage"]
+    MOD06["MOD-06 network"]
+    MOD07["MOD-07 mempool"]
+    MOD08["MOD-08 rpc"]
+    MOD09["MOD-09 wallet-core"]
+    MOD10["MOD-10 merchant-core"]
+    MOD11["MOD-11 node"]
+    MOD12["MOD-12 cli"]
+    MOD13["MOD-13 miner"]
+    MOD14["MOD-14 explorer"]
+    MOD15["MOD-15 wallet"]
+    MOD16["MOD-16 merchant"]
+    MOD17["MOD-17 integration-tests"]
+    MOD18["MOD-18 demo"]
+
+    MOD02 --> MOD01
+    MOD03 --> MOD01
+    MOD03 --> MOD02
+    MOD04 --> MOD01
+    MOD04 --> MOD02
+    MOD04 --> MOD03
+    MOD05 --> MOD01
+    MOD06 --> MOD01
+    MOD07 --> MOD01
+    MOD07 --> MOD04
+    MOD08 --> MOD01
+    MOD09 --> MOD01
+    MOD09 --> MOD02
+    MOD10 --> MOD01
+    MOD10 --> MOD09
+
+    MOD11 --> MOD01
+    MOD11 --> MOD02
+    MOD11 --> MOD04
+    MOD11 --> MOD05
+    MOD11 --> MOD06
+    MOD11 --> MOD07
+    MOD11 --> MOD08
+
+    MOD12 --> MOD01
+    MOD12 --> MOD08
+    MOD12 --> MOD09
+
+    MOD13 --> MOD01
+    MOD13 --> MOD03
+    MOD13 --> MOD08
+
+    MOD14 --> MOD01
+    MOD14 --> MOD02
+    MOD14 --> MOD04
+    MOD14 --> MOD08
+
+    MOD15 --> MOD01
+    MOD15 --> MOD09
+    MOD15 -->|DEC-31| MOD12
+
+    MOD16 --> MOD08
+    MOD16 --> MOD10
+
+    MOD18 --> MOD01
+    MOD18 --> MOD02
+    MOD18 --> MOD08
+    MOD18 --> MOD09
+
+    MOD17 --> MOD01
+    MOD17 --> MOD02
+    MOD17 --> MOD03
+    MOD17 --> MOD04
+    MOD17 --> MOD05
+    MOD17 --> MOD06
+    MOD17 --> MOD07
+    MOD17 --> MOD08
+    MOD17 --> MOD09
+    MOD17 --> MOD10
+    MOD17 -.->|dev, DEC-20| MOD11
+    MOD17 -.->|dev, DEC-20| MOD13
+    MOD17 -.->|dev, DEC-23| MOD12
+```
+
+## Matriks fitur × modul
+
+Keterangan: ● = memakai atau mengubah modul · ○ = hanya membaca
+
+| Fitur ↓ / Modul → | 01 | 02 | 03 | 04 | 05 | 06 | 07 | 08 | 09 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| FTR-01 Node regtest | ● | ● | ● | ● | ● | | | ● | | | ● | | | | | | ● | |
+| FTR-02 Menambang | ● | | ● | ● | ○ | | | ● | | | ● | | ● | | | | ● | |
+| FTR-03 Kirim dan terima | ● | ● | | ● | ○ | | ● | ● | ● | | ● | ● | ● | | | | ● | |
+| FTR-04 Multi-node | ○ | | | ● | ● | ● | ○ | | | | ● | | | | | | ● | |
+| FTR-05 Explorer | ○ | ○ | | ○ | | | | ● | ○ | | ○ | | ○ | ● | | | ● | |
+| FTR-06 Testnet publik | ● | ● | ● | ● | ● | ● | ● | ● | ● | | ● | ● | ● | ● | | | ● | |
+| FTR-07 Wallet desktop | ○ | | | | | | | ● | ● | | | ● | | | ● | | | |
+| FTR-08 Wallet mobile | ○ | | | | | | | ● | ● | | | ● | | | ● | | | |
+| FTR-09 Pelaku usaha | ○ | | | | | | | ● | ● | ● | | | | | | ● | | |
+| FTR-10 Rilis | | | | | | | | | | | ● | ● | ● | ● | ● | ● | | |
+| FTR-11 Demo publik regtest | ○ | | | | | ● | | ● | ● | | ● | ● | ● | ● | ● | | | ● |
+
+**Analisis dampak:** MOD-04 (consensus) dipakai oleh FTR-01 sampai FTR-06; setiap perubahannya wajib diuji ulang lewat MOD-17.

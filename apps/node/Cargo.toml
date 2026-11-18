@@ -1,0 +1,27 @@
+[package]
+name = "zevrigo-node"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "zevrigo-node"
+path = "src/main.rs"
+
+[dependencies]
+zevrigo-consensus.workspace = true
+zevrigo-crypto.workspace = true
+zevrigo-mempool.workspace = true
+zevrigo-network.workspace = true
+zevrigo-primitives.workspace = true
+zevrigo-rpc.workspace = true
+zevrigo-storage.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true
