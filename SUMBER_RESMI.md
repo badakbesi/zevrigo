@@ -33,12 +33,12 @@ disebut dokumen sebelum tanggal itu merujuk riwayat tersebut.
 |---|---|---|
 | Mainnet | Belum diluncurkan | Ditetapkan saat peluncuran |
 | Testnet | Belum diluncurkan | Ditetapkan saat peluncuran (TSK-F06); nilai di kode sekarang sementara |
-| Regtest (jaringan demo publik) | Berjalan sejak November 2026, koin demo tidak bernilai | `8b9eb3187250bbdfe1577ebcb668c30003213a9ee6a4424427b08e38da364dab` |
+| Regtest (jaringan demo publik) | Dimulai ulang 19 November 2026 (chain sebelumnya dihapus); koin demo tidak bernilai | `8b9eb3187250bbdfe1577ebcb668c30003213a9ee6a4424427b08e38da364dab` |
 
 Genesis regtest sama di setiap komputer, jadi jaringan demo resmi dikenali dari seed resminya:
 
 ```
-/dns4/zevrigo-seed.ratuaurion.store/tcp/443/tls/sni/zevrigo-seed.ratuaurion.store/ws/p2p/12D3KooWAGJ2ax5LCU89ZeSg32yxndQSzkpTjv3fD3izZohY5rBa
+/dns4/zevrigo-seed.ratuaurion.store/tcp/443/tls/sni/zevrigo-seed.ratuaurion.store/ws/p2p/12D3KooWABPBsu8gZWtL7bbeEPjg6gwRPDbp3GZidpTeUC95rRDo
 ```
 
 | Layanan demo | Alamat |
@@ -51,6 +51,11 @@ Genesis regtest sama di setiap komputer, jadi jaringan demo resmi dikenali dari 
 Jaringan dengan genesis lain, atau yang tidak tersambung ke seed resmi, bukan jaringan Zevrigo walaupun memakai kode yang sama.
 Di Proof of Work siapa pun bisa menjalankan node dengan aturan berbeda; chain resmi adalah chain sah dengan kerja kumulatif
 terbanyak menurut aturan di repo inti, tanpa checkpoint.
+
+**Risiko jaringan demo (diumumkan 19 November 2026).** Jaringan demo memakai Proof of Work regtest yang sangat murah. Siapa pun yang
+menjalankan node dan penambang bisa membuat chain lebih panjang dan menulis ulang riwayat jaringan demo. Itu disengaja agar
+siapa pun bisa mencoba menambang tanpa alat khusus. Koin demo tidak bernilai, tidak bisa dijual, dan bisa hilang saat reset
+atau saat chain ditulis ulang. Jangan menerima koin demo sebagai pembayaran apa pun.
 
 ## Rilis
 
