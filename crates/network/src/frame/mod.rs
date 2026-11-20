@@ -1,7 +1,9 @@
 //! Bingkai pesan P2P (Spesifikasi P2P Bagian 3): `varint<32>(panjang) ‖ isi`, isi paling banyak 2 MiB.
 //!
-//! Panjang yang melebihi batas, varint tidak minimal, atau aliran yang berakhir sebelum isi lengkap dilaporkan sebagai
-//! [`MessageError`] (pelanggaran rekan), terpisah dari galat I/O biasa.
+//! Panjang yang melebihi batas atau varint tidak minimal dilaporkan sebagai [`MessageError`] (pelanggaran rekan), terpisah
+//! dari galat I/O biasa. Aliran yang berakhir sebelum pesan lengkap adalah galat I/O biasa (`UnexpectedEof`), bukan
+//! pelanggaran (DEC-41): koneksi bisa putus di tengah pesan (misalnya lewat Cloudflare Tunnel), dan rekan yang menutup
+//! aliran tanpa menjawab juga meninggalkan aliran kosong.
 
 use std::io;
 
@@ -49,7 +51,7 @@ fn decode_length(prefix: &[u8]) -> Result<usize, MessageError> {
 ///
 /// # Errors
 ///
-/// Galat I/O dari `io` selain akhir aliran.
+/// Galat I/O dari `io`, termasuk `UnexpectedEof` jika aliran berakhir sebelum awalan panjang atau isi lengkap.
 pub async fn read_frame<T>(io: &mut T) -> io::Result<Result<Vec<u8>, MessageError>>
 where
     T: AsyncRead + Unpin + Send,
@@ -57,13 +59,7 @@ where
     let mut prefix = Vec::with_capacity(MAX_PREFIX_LEN);
     loop {
         let mut one = [0_u8; 1];
-        match io.read_exact(&mut one).await {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
-                return Ok(Err(MessageError::Truncated));
-            }
-            Err(error) => return Err(error),
-        }
+        io.read_exact(&mut one).await?;
         let [byte] = one;
         prefix.push(byte);
         if byte & 0x80 == 0 {
@@ -78,13 +74,8 @@ where
         Err(error) => return Ok(Err(error)),
     };
     let mut payload = vec![0_u8; len];
-    match io.read_exact(&mut payload).await {
-        Ok(()) => Ok(Ok(payload)),
-        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
-            Ok(Err(MessageError::Truncated))
-        }
-        Err(error) => Err(error),
-    }
+    io.read_exact(&mut payload).await?;
+    Ok(Ok(payload))
 }
 
 /// Menulis satu bingkai berisi `payload` ke `io`.

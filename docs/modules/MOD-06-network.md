@@ -17,7 +17,9 @@ Menangani komunikasi *peer-to-peer* antar node menggunakan `rust-libp2p` 0.57 (D
 - `frame`: bingkai `varint<32>(panjang) ‖ isi`, paling banyak 2 MiB; panjang tidak minimal atau aliran terpotong adalah pelanggaran rekan.
 - `protocol`: nama `/zvrg/<16 hex network_id>/<nama>/1` untuk `status`, `headers`, `blocks`, `block`, `tx`.
 - `key`: kunci rekan Ed25519, 32 byte mentah di `<datadir>/<jaringan>/p2p_key` (izin `0600`), dibuat sekali.
-- `ban`: blokir 24 jam per `PeerId` dan per IP (loopback hanya per `PeerId`).
+- `ban`: blokir 24 jam per `PeerId` dan per IP (loopback hanya per `PeerId`). Rekan operator dari `--connect` tidak pernah
+  diblokir, hanya diputus lalu disambung ulang (DEC-41).
+- `frame`: aliran yang berakhir sebelum pesan lengkap adalah galat I/O biasa, bukan pesan rusak (DEC-41).
 - `transport` (TSK-M45): `DnsTcp`, TCP yang juga mendial `/dns4`, `/dns6`, `/dns` (resolver sistem setiap dial, tanpa `libp2p-dns`), dasar TCP dan WebSocket; `is_websocket`.
 - `service::Network`: swarm TCP atau WebSocket (`/ws`, klien juga `/tls/sni/<nama>/ws`) + Noise XX + Yamux, lima protokol request-response, 8 koneksi keluar / 32 masuk / 1 per `PeerId`, koneksi menganggur 300 detik, waktu tunggu jawaban 30 detik, sambung ulang ke `--connect` setiap 10 detik, pertukaran `status` otomatis saat terhubung dan setiap 60 detik (keepalive, DEC-33), sanksi pesan rusak dan jumlah entri `Blocks` yang salah, putus setelah 3 waktu habis berturut-turut. Permintaan masuk lain diteruskan sebagai `NetEvent` beserta `Reply`.
 
@@ -31,3 +33,4 @@ Menangani komunikasi *peer-to-peer* antar node menggunakan `rust-libp2p` 0.57 (D
 - [TSK-M14](../tasks/TSK-M14-network-libp2p.md) — 🟢 selesai
 - [TSK-M28](../tasks/TSK-M28-p2p-daemon.md) — 🟢 selesai (MOD-11)
 - [TSK-M45](https://github.com/badakbesi/zevrigo-demo/blob/main/docs/tasks/TSK-M45-seed-websocket.md) — 🟢 selesai (WebSocket, `/dns*`, keepalive, seed lewat Cloudflare Tunnel)
+- [TSK-M67](../tasks/TSK-M67-p2p-putus-sambung.md) — 🟡 aliran terpotong tanpa sanksi, rekan `--connect` tanpa blokir (DEC-41)

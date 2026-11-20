@@ -2,7 +2,8 @@
 //!
 //! Pesan rusak dari rekan dikembalikan sebagai nilai `Err(MessageError)`, bukan galat I/O. Dengan begitu
 //! `request_response` tetap melaporkan permintaan masuk yang rusak (galat baca permintaan tidak pernah dilaporkan),
-//! dan layanan jaringan bisa memberi sanksi kepada pengirimnya.
+//! dan layanan jaringan bisa memberi sanksi kepada pengirimnya. Aliran yang berakhir sebelum pesan lengkap tetap galat I/O
+//! (DEC-41), sehingga dilaporkan sebagai permintaan yang gagal, tanpa sanksi.
 
 use std::io;
 use std::marker::PhantomData;

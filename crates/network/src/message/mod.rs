@@ -86,9 +86,6 @@ pub enum MessageError {
     /// Awalan panjang bingkai bukan `varint<32>` minimal.
     #[error("awalan panjang pesan bukan varint<32> minimal")]
     FrameLength,
-    /// Aliran berakhir sebelum awalan panjang atau isi pesan lengkap.
-    #[error("aliran berakhir sebelum pesan lengkap")]
-    Truncated,
 }
 
 /// Encoding biner pesan P2P (isi bingkai).

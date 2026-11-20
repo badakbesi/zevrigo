@@ -1225,6 +1225,22 @@ impl<S: ChainStore> Node<S> {
         };
         Ok((id, outcome))
     }
+
+    /// Transaksi mempool urut kedatangan (induk sebelum anak), paling banyak `limit`, untuk dikirim ke rekan yang baru
+    /// tersambung (DEC-41).
+    ///
+    /// # Errors
+    ///
+    /// [`RpcError::Internal`] jika state node rusak.
+    pub fn mempool_transactions(&self, limit: usize) -> Result<Vec<Transaction>, RpcError> {
+        let state = self.lock()?;
+        Ok(state
+            .mempool
+            .in_arrival_order()
+            .take(limit)
+            .map(|entry| entry.tx().clone())
+            .collect())
+    }
 }
 
 impl<S: ChainStore + Send + 'static> RpcBackend for Node<S> {

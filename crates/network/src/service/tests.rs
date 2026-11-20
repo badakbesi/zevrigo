@@ -203,7 +203,54 @@ async fn other_network_is_disconnected_without_ban() {
 }
 
 #[tokio::test]
-async fn wrong_blocks_entry_count_is_punished() {
+async fn wrong_blocks_entry_count_from_inbound_peer_is_punished() {
+    // `a` menyambung ke `b`, jadi bagi `b` rekan `a` bukan rekan operator: blokir 24 jam berlaku.
+    let mut b = node(NET_A, Vec::new(), 0);
+    let b_addr = dial_address(&mut b).await;
+    let a = node(NET_A, vec![b_addr], 3);
+    let a_id = a.local_peer_id();
+    tokio::spawn(serve(a, true));
+
+    wait_status(&mut b, a_id).await;
+    b.request_blocks(
+        &a_id,
+        GetBlocks {
+            ids: vec![id(1), id(2)],
+        },
+    );
+    let event = next_matching(&mut b, |event| {
+        matches!(event, NetEvent::PeerPunished { .. })
+    })
+    .await;
+    let NetEvent::PeerPunished {
+        peer,
+        offense,
+        banned,
+    } = event
+    else {
+        unreachable!()
+    };
+    assert_eq!(peer, a_id);
+    assert_eq!(
+        offense,
+        Offense::WrongEntryCount {
+            expected: 2,
+            actual: 1
+        }
+    );
+    assert!(banned);
+    assert!(b.is_banned(&a_id));
+    let event = next_matching(&mut b, |event| {
+        matches!(event, NetEvent::PeerDisconnected { .. })
+    })
+    .await;
+    assert!(matches!(event, NetEvent::PeerDisconnected { peer } if peer == a_id));
+    assert!(b.connected_peers().is_empty());
+}
+
+#[tokio::test]
+async fn operator_peer_is_disconnected_without_ban_and_redialed() {
+    // DEC-41: `a` ada di `--connect` milik `b` (seperti seed resmi), jadi pelanggaran hanya memutus koneksi.
     let mut a = node(NET_A, Vec::new(), 3);
     let a_id = a.local_peer_id();
     let a_addr = dial_address(&mut a).await;
@@ -221,7 +268,12 @@ async fn wrong_blocks_entry_count_is_punished() {
         matches!(event, NetEvent::PeerPunished { .. })
     })
     .await;
-    let NetEvent::PeerPunished { peer, offense } = event else {
+    let NetEvent::PeerPunished {
+        peer,
+        offense,
+        banned,
+    } = event
+    else {
         unreachable!()
     };
     assert_eq!(peer, a_id);
@@ -232,13 +284,20 @@ async fn wrong_blocks_entry_count_is_punished() {
             actual: 1
         }
     );
-    assert!(b.is_banned(&a_id));
+    assert!(!banned);
+    assert!(!b.is_banned(&a_id));
     let event = next_matching(&mut b, |event| {
         matches!(event, NetEvent::PeerDisconnected { .. })
     })
     .await;
     assert!(matches!(event, NetEvent::PeerDisconnected { peer } if peer == a_id));
-    assert!(b.connected_peers().is_empty());
+    let event = next_matching(&mut b, |event| {
+        matches!(event, NetEvent::PeerConnected { .. })
+    })
+    .await;
+    assert!(matches!(event, NetEvent::PeerConnected { peer, .. } if peer == a_id));
+    assert_eq!(wait_status(&mut b, a_id).await, status(NET_A, 3));
+    assert!(!b.is_banned(&a_id));
 }
 
 #[tokio::test]

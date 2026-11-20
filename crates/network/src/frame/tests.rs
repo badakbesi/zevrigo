@@ -62,8 +62,11 @@ fn bad_length_prefixes_are_rejected() {
 }
 
 #[test]
-fn truncated_streams_are_rejected() {
-    assert_eq!(read(Vec::new()), Err(MessageError::Truncated));
-    assert_eq!(read(vec![0x80]), Err(MessageError::Truncated));
-    assert_eq!(read(vec![3, 1, 2]), Err(MessageError::Truncated));
+fn truncated_streams_are_io_errors_not_offenses() {
+    // DEC-41: aliran kosong, awalan panjang terpotong, dan isi terpotong adalah koneksi yang putus, bukan pesan rusak.
+    let cases: [Vec<u8>; 3] = [Vec::new(), vec![0x80], vec![3, 1, 2]];
+    for bytes in cases {
+        let error = block_on(read_frame(&mut Cursor::new(bytes.clone()))).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof, "{bytes:?}");
+    }
 }

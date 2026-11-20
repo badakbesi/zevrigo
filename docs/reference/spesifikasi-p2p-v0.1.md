@@ -1,6 +1,6 @@
 # Spesifikasi P2P Zevrigo Coin (ZVRG) v0.1: transport libp2p, 5 protokol, sinkronisasi header lalu blok, siaran blok dan transaksi
 
-> Diperbarui: 11 November 2026 · Pemilik: pencipta · Ditulis: Quick · Task: TSK-S05, TSK-M45 · Status: 🟢 v0.1
+> Diperbarui: 20 November 2026 (DEC-41) · Pemilik: pencipta · Ditulis: Quick · Task: TSK-S05, TSK-M45, TSK-M67 · Status: 🟢 v0.1
 > Lokasi di repo: `docs/reference/spesifikasi-p2p-v0.1.md`
 
 | Status | Ringkasan |
@@ -53,7 +53,9 @@ sama sekali, karena negosiasi protokol libp2p gagal.
 ## 3. Encoding pesan
 
 - Setiap pesan dikirim sebagai `varint<32>(panjang) ‖ isi` di aliran request-response. Panjang maksimum 2_097_152 byte
-  (2 MiB). Panjang lebih besar, varint tidak minimal, atau aliran yang berakhir sebelum isi lengkap: rekan disanksi (Bagian 7).
+  (2 MiB). Panjang lebih besar atau varint tidak minimal: rekan disanksi (Bagian 7). Aliran yang berakhir sebelum isi lengkap bukan
+  pelanggaran (DEC-41): koneksi bisa putus di tengah pesan, misalnya lewat Cloudflare Tunnel, jadi permintaan itu dianggap gagal
+  tanpa sanksi.
 - Isi memakai encoding kanonis Spesifikasi Format v0.1 Bagian 2 (DEC-12): varint LEB128 minimal, `vec<T>` = `varint(n) ‖ T…`,
   dan setiap byte wajib terbaca habis. `Header` (96 byte), `Block`, dan `Transaction` memakai encoding Bagian 5 dan 6.
 
@@ -82,6 +84,10 @@ Koreksi 1 November 2026 (TSK-M14): ukuran `Status` adalah 105 byte; versi pertam
    menjawab seperti di langkah 1. Alasannya: Cloudflare menutup WebSocket yang diam sekitar 100 detik, dan nilai itu tidak
    bisa diubah. Jawaban memperbarui ujung rekan (langkah 2 dan 3 berlaku lagi). Permintaan keepalive yang tidak dijawab
    dihitung seperti permintaan lain (Bagian 7: 3 kali berturut-turut, putus tanpa blokir).
+5. **Mempool (DEC-41, TSK-M67):** saat `status` rekan pertama kali (per koneksi) menunjukkan chainwork sama dengan atau lebih
+   besar daripada chainwork ujung sendiri, node mengirim isi mempoolnya lewat `tx`: paling banyak 64 transaksi, urut
+   kedatangan (induk sebelum anak). Rekan yang masih tertinggal menerimanya sesudah mengejar (`status` berikutnya, paling
+   lambat keepalive). Dengan begitu transaksi yang masuk saat rekan terputus tetap sampai, tanpa menunggu siaran baru.
 
 ---
 
@@ -133,6 +139,7 @@ yang dilepas dikembalikan ke mempool jika masih sah, berurutan, paling banyak se
 - Saat node menerima blok yang menjadi ujung chain aktif baru (dari miner lewat RPC atau dari rekan), node mengirim `block`
   ke semua rekan yang belum diketahui punya blok itu, kecuali pengirimnya.
 - Saat transaksi diterima mempool (dari RPC atau dari rekan), node mengirim `tx` ke semua rekan kecuali pengirimnya.
+  Isi mempool juga dikirim ke rekan yang baru tersambung (Bagian 4 langkah 5).
 - Penerima mengabaikan blok atau transaksi yang sudah dikenal (berdasarkan block_id atau txid), lalu menjawab `Ack`.
 
 | `Ack.status` | Arti | Tindakan node |
@@ -161,12 +168,17 @@ belum ada di view chain + mempool ditolak dengan status `4`, tanpa sanksi.
 | `Headers` yang tidak menyambung | Putus dan diblokir 24 jam |
 | `Entry` `00` untuk blok yang sudah diumumkan | Dilewati untuk blok itu |
 | Tidak menjawab dalam 30 detik | Permintaan dianggap gagal; setelah 3 kali berturut-turut, putus (tanpa blokir) |
+| Aliran berakhir sebelum pesan lengkap (koneksi putus, atau rekan menutup aliran tanpa menjawab) | Permintaan dianggap gagal, tanpa sanksi (DEC-41) |
 
 Blokir disimpan di memori per `PeerId` dan per alamat IP, sehingga hilang saat node dimulai ulang. Alamat loopback
 (`127.0.0.0/8`, `::1`) hanya diblokir per `PeerId`, supaya beberapa node di satu mesin (uji TSK-F04) tidak saling
 memblokir (TSK-M14). Rekan yang masuk lewat Cloudflare Tunnel tampak dari 127.0.0.1 (koneksi dari cloudflared), jadi juga
-hanya diblokir per `PeerId`; IP asli peserta tidak terlihat oleh node. Rekan dari alamat yang ditulis lewat `--connect`
-juga bisa diblokir.
+hanya diblokir per `PeerId`; IP asli peserta tidak terlihat oleh node. **Rekan operator (DEC-41):**
+rekan dari alamat `--connect` (`PeerId` di alamat itu, atau koneksi yang didial ke alamat itu) tidak pernah diblokir. Untuk
+pelanggaran apa pun rekan itu hanya diputus, lalu disambung ulang pada selang berikutnya (10 detik); pelanggarannya tetap
+dicatat di log. Alasan: seed resmi sering satu-satunya rekan sebuah node, sehingga blokir 24 jam karena gangguan sesaat
+memutus node dari jaringan (insiden jaringan demo 20 November 2026: node penambang dan treasury memblokir seed karena aliran
+terpotong, chain demo terbelah sekitar 5 jam). Rekan itu dipilih operator sendiri.
 
 ---
 
@@ -224,6 +236,7 @@ juga bisa diblokir.
 | Swarm libp2p, 5 protokol, codec pesan, kunci rekan, batas koneksi, sanksi | MOD-06 | TSK-M14 |
 | Sinkronisasi header lalu blok, siaran, opsi daemon | MOD-11 | TSK-M28 |
 | Transport WebSocket, alamat `/dns*`, keepalive `status` (MOD-06); opsi `--p2p-ws-port` (MOD-11); seed lewat Cloudflare Tunnel | MOD-06, MOD-11 | TSK-M45 |
+| Aliran terpotong tanpa sanksi dan rekan `--connect` tanpa blokir (MOD-06); isi mempool ke rekan yang baru tersambung (MOD-11) | MOD-06, MOD-11, MOD-17 | TSK-M67 |
 | 4 node atau lebih tetap sinkron, jaringan terpisah lalu tersambung (reorg dalam), node yang tertinggal mengejar | MOD-17 | TSK-F04 |
 
 ---
@@ -236,3 +249,4 @@ juga bisa diblokir.
 | DEC-10 bagian 5 | `libp2p` 0.57.1 tanpa fitur bawaan, fitur `tcp`, `noise`, `yamux`, `request-response`, `ed25519`, `macros`, serta `libp2p-swarm` dan `libp2p-tcp` dengan fitur `tokio`, hanya di MOD-06 | 🟢 1 November 2026 (konsekuensi DEC-24) |
 | DEC-33 | Seed publik sementara lewat Cloudflare Tunnel memakai WebSocket libp2p; keepalive `status` 60 detik; nama `/dns*` di-resolve resolver sistem; regtest dulu | 🟢 diputuskan pencipta 11 November 2026 |
 | DEC-10 bagian 12 | Fitur `websocket` libp2p 0.57.1 di MOD-06: +6 paket (libp2p-websocket, futures-rustls, rustls dengan ring, rustls-pki-types, rustls-webpki, webpki-roots), reference/paket-mod06-websocket-v0.1.txt | 🟢 11 November 2026 (konsekuensi DEC-33) |
+| DEC-41 | Aliran yang berakhir sebelum pesan lengkap bukan pelanggaran; rekan `--connect` tidak pernah diblokir (hanya diputus dan disambung ulang); isi mempool (paling banyak 64 transaksi) dikirim ke rekan yang baru tersambung dengan ujung sama atau lebih berat | 🟢 20 November 2026 (insiden jaringan demo, perbaikan diminta pencipta) |

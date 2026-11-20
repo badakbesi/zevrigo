@@ -50,7 +50,7 @@ fn codec_round_trips_and_returns_bad_messages_as_values() {
         assert_eq!(wire, vec![2, 1, 0]);
 
         let error = codec
-            .write_request(&protocol, &mut Vec::new(), Err(MessageError::Truncated))
+            .write_request(&protocol, &mut Vec::new(), Err(MessageError::FrameLength))
             .await
             .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);

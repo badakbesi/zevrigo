@@ -9,6 +9,9 @@
 //! menjalankan sesi baru dengan daftar `--connect` lain. Isi node (chain, cabang, mempool) tetap, seperti daemon yang
 //! dibuka ulang dari penyimpanannya. Jam semua node sama dan tetap, jauh di belakang jadwal, sehingga target tetap
 //! `pow_limit` dan setiap blok berkerja sama.
+//!
+//! Uji kedua (DEC-41, TSK-M67): transaksi yang masuk mempool saat rekan terputus sampai ke rekan itu begitu tersambung
+//! lagi, tanpa blok baru (insiden jaringan demo 20 November 2026: dua transaksi tertahan di mempool seed).
 
 #![forbid(unsafe_code)]
 
@@ -178,6 +181,19 @@ mod ftr04 {
         node.mempool().unwrap().txids
     }
 
+    /// Menunggu sampai mempool `node` berisi tepat `txids`, paling lama [`WAIT`].
+    fn wait_mempool(what: &str, node: &TestNode, txids: &[Hex32]) {
+        let deadline = Instant::now() + WAIT;
+        while mempool(node) != txids {
+            assert!(
+                Instant::now() < deadline,
+                "{what}: mempool {:?}, seharusnya {txids:?}",
+                mempool(node)
+            );
+            sleep(Duration::from_millis(50));
+        }
+    }
+
     fn utxos_of(node: &TestNode, owner: u8) -> usize {
         node.scan_utxos(&[Hex32::new(key(owner))]).unwrap().len()
     }
@@ -296,6 +312,45 @@ mod ftr04 {
         assert_eq!(e.chain_info().unwrap(), c.chain_info().unwrap());
 
         for session in [sa, sb, sc, sd, se] {
+            stop(&rt, session);
+        }
+    }
+
+    #[test]
+    fn mempool_reaches_peer_that_connects_later() {
+        let rt = Runtime::new().unwrap();
+        let [a, b] = [(); 2].map(|()| open_node());
+
+        // 1. B tersambung ke A dan sinkron di 99 blok (alokasi genesis bisa dibelanjakan di blok 100).
+        let (sa, addr_a) = start(&rt, &a, &[]);
+        let addr_a = addr_a.unwrap();
+        let (sb, _) = start(&rt, &b, std::slice::from_ref(&addr_a));
+        let tip_99 = mine(&sa, 2, 99);
+        wait_tip("99 blok dari A", &[&a, &b], 99, tip_99);
+
+        // 2. B terputus; transaksi masuk mempool A dan tidak sampai ke B.
+        stop(&rt, sb);
+        let tx = spend_genesis();
+        let tx_id = Hex32::from(txid(&tx));
+        let sent = sa.relay.send_raw_transaction(&tx.to_bytes()).unwrap();
+        assert_eq!(sent.txid, tx_id);
+        assert_eq!(mempool(&a), vec![tx_id]);
+        assert!(mempool(&b).is_empty());
+
+        // 3. B tersambung lagi dengan ujung yang sama: A mengirim isi mempoolnya (DEC-41), tanpa blok baru.
+        let (sb, _) = start(&rt, &b, std::slice::from_ref(&addr_a));
+        wait_mempool("transaksi sampai ke B", &b, &[tx_id]);
+        assert_eq!(tip(&b), (99, tip_99));
+
+        // 4. B menambang blok 100 berisi transaksi itu; blok sampai ke A dan mempool keduanya kosong.
+        let tip_100 = mine(&sb, 4, 1);
+        wait_tip("blok 100 dari B", &[&a, &b], 100, tip_100);
+        for node in [&a, &b] {
+            assert!(mempool(node).is_empty());
+            assert_eq!(utxos_of(node, 3), 1);
+        }
+
+        for session in [sa, sb] {
             stop(&rt, session);
         }
     }

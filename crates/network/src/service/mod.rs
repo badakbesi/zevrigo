@@ -8,8 +8,12 @@
 //! - pertukaran `status` saat terhubung (versi atau jaringan lain: koneksi ditutup tanpa sanksi);
 //! - `status` ke setiap rekan setiap 60 detik (keepalive), karena proxy seperti Cloudflare menutup WebSocket yang diam
 //!   sekitar 100 detik;
-//! - sanksi untuk pesan rusak dan jawaban `Blocks` yang jumlah entrinya salah (putus dan blokir 24 jam);
+//! - sanksi untuk pesan rusak dan jawaban `Blocks` yang jumlah entrinya salah (putus dan blokir 24 jam), kecuali rekan
+//!   operator dari `--connect`, yang hanya diputus lalu disambung ulang (DEC-41);
 //! - putus tanpa blokir setelah 3 permintaan berturut-turut tidak dijawab dalam 30 detik.
+//!
+//! Aliran yang berakhir sebelum pesan lengkap (koneksi putus di tengah pesan, atau rekan menutup aliran tanpa menjawab)
+//! dilaporkan sebagai permintaan yang gagal, bukan pesan rusak (DEC-41).
 //!
 //! Permintaan `headers`, `blocks`, `block`, dan `tx` dari rekan diteruskan sebagai [`NetEvent`] beserta [`Reply`]
 //! yang wajib dijawab pemanggil (MOD-11). Validasi blok, transaksi, dan header, serta sanksi untuk isi yang tidak sah
@@ -295,12 +299,15 @@ pub enum NetEvent {
         /// `true` jika gagal karena 30 detik tanpa jawaban.
         timed_out: bool,
     },
-    /// Rekan disanksi: koneksi diputus dan rekan diblokir 24 jam.
+    /// Rekan disanksi: koneksi diputus, dan rekan diblokir 24 jam kecuali rekan operator (DEC-41).
     PeerPunished {
         /// Rekan.
         peer: PeerId,
         /// Alasan.
         offense: Offense,
+        /// `true` jika rekan diblokir 24 jam; `false` untuk rekan operator dari `--connect`, yang hanya diputus lalu
+        /// disambung ulang pada selang sambung ulang berikutnya.
+        banned: bool,
     },
 }
 
@@ -575,7 +582,8 @@ impl Network {
         let _ = self.swarm.disconnect_peer_id(*peer);
     }
 
-    /// Memberi sanksi kepada `peer`: putus dan blokir 24 jam (per `PeerId` dan per IP bukan loopback).
+    /// Memberi sanksi kepada `peer`: putus dan blokir 24 jam (per `PeerId` dan per IP bukan loopback). Rekan operator
+    /// dari `--connect` hanya diputus, tanpa blokir (DEC-41).
     pub fn punish(&mut self, peer: &PeerId) {
         self.apply_punishment(*peer, Offense::Reported);
     }
@@ -901,13 +909,44 @@ impl Network {
         }
     }
 
+    /// `true` jika `peer` adalah rekan operator: `PeerId`-nya tertulis di alamat `--connect`, atau koneksinya didial ke
+    /// salah satu alamat `--connect` (DEC-41).
+    fn is_operator(&self, peer: &PeerId) -> bool {
+        if self
+            .connect
+            .iter()
+            .any(|address| peer_of(address) == Some(*peer))
+        {
+            return true;
+        }
+        self.peers
+            .get(peer)
+            .and_then(|info| info.dialed.as_ref())
+            .is_some_and(|dialed| {
+                self.connect
+                    .iter()
+                    .any(|address| strip_p2p(address) == *dialed)
+            })
+    }
+
     fn apply_punishment(&mut self, peer: PeerId, offense: Offense) {
-        let ip = self.peers.get(&peer).and_then(|info| info.ip);
-        self.bans.ban(peer, ip, Instant::now());
-        // Memutus semua koneksi rekan ini dan menolak koneksi barunya.
-        self.swarm.behaviour_mut().banned.block_peer(peer);
-        self.events
-            .push_back(NetEvent::PeerPunished { peer, offense });
+        // DEC-41: rekan operator (biasanya seed resmi, sering satu-satunya rekan) tidak diblokir. Blokir 24 jam karena
+        // gangguan sesaat memutus node dari jaringan; rekan itu dipilih operator sendiri, jadi cukup diputus lalu
+        // disambung ulang pada selang berikutnya.
+        let banned = !self.is_operator(&peer);
+        if banned {
+            let ip = self.peers.get(&peer).and_then(|info| info.ip);
+            self.bans.ban(peer, ip, Instant::now());
+            // Memutus semua koneksi rekan ini dan menolak koneksi barunya.
+            self.swarm.behaviour_mut().banned.block_peer(peer);
+        } else {
+            self.disconnect(&peer);
+        }
+        self.events.push_back(NetEvent::PeerPunished {
+            peer,
+            offense,
+            banned,
+        });
     }
 
     fn on_tick(&mut self) {

@@ -3,10 +3,12 @@
 //!
 //! Saat terhubung, ujung chain ditukar lewat `status` (MOD-06). Jika chainwork rekan lebih besar, node meminta header
 //! dengan locator, lalu badan blok 16 sekali minta. Blok yang menjadi ujung chain aktif baru dan transaksi baru di
-//! mempool disiarkan ke rekan lain, termasuk yang datang lewat RPC ([`Relay`]). Rekan yang mengirim header, blok,
-//! atau transaksi tidak sah disanksi (putus dan blokir 24 jam, MOD-06). Setiap 10 detik node mencoba lagi sinkronisasi
-//! yang belum selesai. Jika indeks header penuh sebelum cabang rekan terbukti lebih berat, node menjalankan presync
-//! header dengan rekan itu (TSK-M35 bagian B, [`Presync`]).
+//! mempool disiarkan ke rekan lain, termasuk yang datang lewat RPC ([`Relay`]). Rekan yang `status`-nya pertama kali
+//! menunjukkan ujung sama atau lebih berat menerima isi mempool node (paling banyak [`MEMPOOL_ON_CONNECT`], DEC-41),
+//! sehingga transaksi yang masuk saat rekan itu terputus tetap sampai. Rekan yang mengirim header, blok, atau transaksi
+//! tidak sah disanksi (putus dan blokir 24 jam, MOD-06; rekan `--connect` hanya diputus, DEC-41). Setiap 10 detik node
+//! mencoba lagi sinkronisasi yang belum selesai. Jika indeks header penuh sebelum cabang rekan terbukti lebih berat, node
+//! menjalankan presync header dengan rekan itu (TSK-M35 bagian B, [`Presync`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -38,6 +40,11 @@ pub const SYNC_INTERVAL: Duration = Duration::from_secs(10);
 
 /// ID blok yang diingat per rekan (diketahui sudah dimiliki rekan itu) sebelum daftarnya dikosongkan.
 const MAX_KNOWN_PER_PEER: usize = 4_096;
+
+/// Transaksi mempool paling banyak (urut kedatangan, induk sebelum anak) yang dikirim sekali per koneksi ke rekan yang
+/// ujungnya sama atau lebih berat (DEC-41). Kecil, jauh di bawah batas aliran serentak request-response libp2p;
+/// transaksi lain sampai lewat siaran biasa atau koneksi berikutnya.
+pub const MEMPOOL_ON_CONNECT: usize = 64;
 
 /// Blok atau transaksi baru dari RPC yang perlu disiarkan ke rekan.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -172,6 +179,8 @@ struct PeerState {
     /// Presync header yang sedang berjalan dengan rekan ini (TSK-M35 bagian B). Selama ada, jawaban `Headers` dari rekan
     /// ini diproses presync, dan sinkronisasi header biasa dengan rekan ini tidak dimulai.
     presync: Option<Presync>,
+    /// Isi mempool sudah dikirim ke rekan ini pada koneksi ini (DEC-41).
+    mempool_sent: bool,
 }
 
 impl PeerState {
@@ -285,8 +294,20 @@ impl<S: ChainStore + Send + 'static> P2pService<S> {
                 request,
                 ..
             } => self.on_failure(peer, kind, request),
-            NetEvent::PeerPunished { peer, offense } => {
-                tracing::warn!(%peer, ?offense, "rekan disanksi: diputus dan diblokir 24 jam");
+            NetEvent::PeerPunished {
+                peer,
+                offense,
+                banned,
+            } => {
+                if banned {
+                    tracing::warn!(%peer, ?offense, "rekan disanksi: diputus dan diblokir 24 jam");
+                } else {
+                    tracing::warn!(
+                        %peer,
+                        ?offense,
+                        "rekan --connect melanggar: diputus tanpa blokir, disambung ulang"
+                    );
+                }
             }
         }
     }
@@ -317,11 +338,38 @@ impl<S: ChainStore + Send + 'static> P2pService<S> {
     }
 
     fn on_status(&mut self, peer: PeerId, status: &Status) {
+        let local = self.local_chainwork();
+        let mut send_mempool = false;
         if let Some(state) = self.peers.get_mut(&peer) {
             state.chainwork = status.chainwork;
+            // DEC-41: rekan yang ujungnya sama atau lebih berat bisa memakai transaksi mempool node ini; rekan yang masih
+            // tertinggal menerimanya sesudah mengejar (status berikutnya, paling lambat keepalive).
+            if !state.mempool_sent && status.chainwork >= local {
+                state.mempool_sent = true;
+                send_mempool = true;
+            }
         }
-        if status.chainwork > self.local_chainwork() {
+        if send_mempool {
+            self.send_mempool(peer);
+        }
+        if status.chainwork > local {
             self.request_headers(peer, None);
+        }
+    }
+
+    /// Mengirim isi mempool ke `peer` (paling banyak [`MEMPOOL_ON_CONNECT`], urut kedatangan). Rekan yang sudah punya
+    /// transaksinya menjawab `Ack` 0; transaksi yang tidak cocok dengan view rekan dijawab 4, tanpa sanksi.
+    fn send_mempool(&mut self, peer: PeerId) {
+        match self.node.mempool_transactions(MEMPOOL_ON_CONNECT) {
+            Ok(txs) => {
+                if !txs.is_empty() {
+                    tracing::info!(%peer, count = txs.len(), "mempool dikirim ke rekan");
+                }
+                for tx in txs {
+                    let _ = self.net.send_tx(&peer, tx);
+                }
+            }
+            Err(error) => tracing::warn!(%error, "mempool gagal dibaca untuk rekan"),
         }
     }
 
