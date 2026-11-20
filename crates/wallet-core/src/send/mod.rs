@@ -2,7 +2,8 @@
 //!
 //! Alurnya dua langkah: [`plan`] memilih koin dan menghitung biaya serta kembalian tanpa kunci rahasia, lalu
 //! [`sign_plan`] menandatangani setiap input dengan BIP340 atas `sighash_v1` (DEC-13). [`build_transaction`]
-//! menjalankan keduanya. Semua langkah deterministik: `aux_rand` tanda tangan diberikan pemanggil. Wallet v0.1 hanya
+//! menjalankan keduanya. [`plan_sweep`] menyusun rencana kirim semua: semua koin yang bisa dipakai, satu output penerima,
+//! tanpa kembalian (RENCANA_T9 F4). Semua langkah deterministik: `aux_rand` tanda tangan diberikan pemanggil. Wallet v0.1 hanya
 //! membelanjakan output jenis 0 miliknya sendiri. Modul ini bukan aturan konsensus.
 
 use std::collections::BTreeSet;
@@ -170,7 +171,21 @@ pub struct SendRequest {
     pub tip_height: u64,
 }
 
-/// Rencana transaksi hasil [`plan`]: koin terpilih (urut sebagai input), output, biaya, kembalian, dan ukuran pasti
+/// Permintaan kirim semua (RENCANA_T9 F4): penerima, tarif biaya, dan tinggi ujung chain. Jumlah yang diterima penerima
+/// dihitung [`plan_sweep`] (Σ koin yang bisa dipakai − biaya).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SweepRequest {
+    /// Jenis output penerima (dari alamat).
+    pub recipient_kind: OutputKind,
+    /// Payload output penerima (dari alamat).
+    pub recipient_payload: [u8; 32],
+    /// Tarif biaya dalam quanta per byte encoding lengkap transaksi bertanda tangan (boleh 0).
+    pub fee_rate: u128,
+    /// Tinggi ujung chain aktif. Koin dipakai jika `spendable_at <= tip_height + 1`.
+    pub tip_height: u64,
+}
+
+/// Rencana transaksi hasil [`plan`] atau [`plan_sweep`]: koin terpilih (urut sebagai input), output, biaya, kembalian, dan ukuran pasti
 /// transaksi bertanda tangan.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Plan {
@@ -238,6 +253,33 @@ fn check_size(size: usize) -> Result<(), SendError> {
     Ok(())
 }
 
+/// Koin yang boleh dipakai di blok berikutnya (`spendable_at <= tip_height + 1`), urut jumlah menurun lalu outpoint naik.
+/// Outpoint yang muncul lebih dari sekali ditolak.
+fn eligible_coins(coins: &[Coin], tip_height: u64) -> Result<Vec<&Coin>, SendError> {
+    let mut seen = BTreeSet::new();
+    for coin in coins {
+        if !seen.insert(coin.outpoint) {
+            return Err(SendError::DuplicateCoin {
+                txid: coin.outpoint.txid(),
+                index: coin.outpoint.index(),
+            });
+        }
+    }
+    // Sengaja saturating: pada tinggi u64::MAX semua koin dianggap sudah bisa dipakai.
+    let limit = tip_height.saturating_add(1);
+    let mut eligible: Vec<&Coin> = coins
+        .iter()
+        .filter(|coin| coin.spendable_at <= limit)
+        .collect();
+    eligible.sort_by(|left, right| {
+        right
+            .amount
+            .cmp(&left.amount)
+            .then_with(|| left.outpoint.cmp(&right.outpoint))
+    });
+    Ok(eligible)
+}
+
 /// Memilih koin dan menghitung biaya serta kembalian (Spesifikasi Wallet v0.1 Bagian 5).
 ///
 /// - Koin dengan `spendable_at <= tip_height + 1` diurutkan jumlah menurun, lalu outpoint naik, dan diambil
@@ -259,27 +301,7 @@ pub fn plan(coins: &[Coin], request: &SendRequest) -> Result<Plan, SendError> {
         request.recipient_payload,
     )
     .map_err(|_| SendError::ZeroAmount)?;
-    let mut seen = BTreeSet::new();
-    for coin in coins {
-        if !seen.insert(coin.outpoint) {
-            return Err(SendError::DuplicateCoin {
-                txid: coin.outpoint.txid(),
-                index: coin.outpoint.index(),
-            });
-        }
-    }
-    // Sengaja saturating: pada tinggi u64::MAX semua koin dianggap sudah bisa dipakai.
-    let limit = request.tip_height.saturating_add(1);
-    let mut eligible: Vec<&Coin> = coins
-        .iter()
-        .filter(|coin| coin.spendable_at <= limit)
-        .collect();
-    eligible.sort_by(|left, right| {
-        right
-            .amount
-            .cmp(&left.amount)
-            .then_with(|| left.outpoint.cmp(&right.outpoint))
-    });
+    let eligible = eligible_coins(coins, request.tip_height)?;
 
     let recipient_size = recipient.encoded_size();
     let mut total = Amount::ZERO;
@@ -373,6 +395,83 @@ fn finish(
         change: None,
         size: base,
     })
+}
+
+/// Kirim semua (RENCANA_T9 F4, Spesifikasi Wallet v0.1 Bagian 5): semua koin dengan `spendable_at <= tip_height + 1`
+/// menjadi input (urutan sama dengan [`plan`]), dengan satu output ke penerima sebesar Σ input − biaya, tanpa kembalian.
+///
+/// - Biaya = `fee_rate × ukuran` encoding lengkap transaksi bertanda tangan. Panjang varint jumlah penerima `L` dicari
+///   dari 1 byte ke atas; dipakai `L` terkecil yang memberi jumlah dengan varint ≤ `L`. Di batas varint biaya bisa lebih
+///   tinggi dari `fee_rate × ukuran` (paling banyak selisih panjang varint itu dikali tarif), seperti kembalian di [`plan`].
+/// - Penerima wajib menerima minimal 1 quanta.
+///
+/// # Errors
+///
+/// [`SendError::DuplicateCoin`]; [`SendError::InsufficientFunds`] bila tidak ada koin yang bisa dipakai (`needed` 1
+/// quanta) atau Σ input tidak lebih dari biaya (`needed` = biaya + 1 quanta); [`SendError::TooLarge`] bila semua koin
+/// tidak muat dalam satu transaksi; atau [`SendError::AmountOverflow`].
+pub fn plan_sweep(coins: &[Coin], request: &SweepRequest) -> Result<Plan, SendError> {
+    let eligible = eligible_coins(coins, request.tip_height)?;
+    if eligible.is_empty() {
+        return Err(SendError::InsufficientFunds {
+            available: Amount::ZERO,
+            needed: Amount::from_quanta(1),
+        });
+    }
+    let mut total = Amount::ZERO;
+    let mut inputs_size: usize = 0;
+    for &coin in &eligible {
+        total = total
+            .checked_add(coin.amount)
+            .ok_or(SendError::AmountOverflow)?;
+        let input = Input::new(coin.outpoint.txid(), coin.outpoint.index());
+        inputs_size = inputs_size
+            .checked_add(input.encoded_size())
+            .ok_or(SendError::AmountOverflow)?;
+    }
+    let without_recipient = size_without_change(eligible.len(), inputs_size, 0)
+        .ok_or(SendError::TooLarge { size: usize::MAX })?;
+    let smallest = without_recipient
+        .checked_add(OUTPUT_FIXED_SIZE)
+        .and_then(|size| size.checked_add(1))
+        .ok_or(SendError::TooLarge { size: usize::MAX })?;
+    check_size(smallest)?;
+    for len in 1..=MAX_AMOUNT_VARINT_LEN {
+        let estimate = without_recipient
+            .checked_add(OUTPUT_FIXED_SIZE)
+            .and_then(|size| size.checked_add(len))
+            .ok_or(SendError::TooLarge { size: usize::MAX })?;
+        let fee = fee_for(request.fee_rate, estimate)?;
+        let Some(amount) = total
+            .checked_sub(fee)
+            .filter(|amount| *amount != Amount::ZERO)
+        else {
+            let needed = fee
+                .checked_add(Amount::from_quanta(1))
+                .ok_or(SendError::AmountOverflow)?;
+            return Err(SendError::InsufficientFunds {
+                available: total,
+                needed,
+            });
+        };
+        if varint_u128_len(amount.as_quanta()) > len {
+            continue;
+        }
+        let recipient = Output::new(amount, request.recipient_kind, request.recipient_payload)?;
+        let size = without_recipient
+            .checked_add(recipient.encoded_size())
+            .ok_or(SendError::TooLarge { size: usize::MAX })?;
+        check_size(size)?;
+        return Ok(Plan {
+            coins: eligible.into_iter().cloned().collect(),
+            outputs: vec![recipient],
+            fee,
+            change: None,
+            size,
+        });
+    }
+    // Varint u128 paling panjang 19 byte, jadi perulangan selalu selesai di atas.
+    Err(SendError::AmountOverflow)
 }
 
 /// Menandatangani rencana: input ke-`i` ditandatangani kunci `branch/index` koin ke-`i` di bawah kunci akun

@@ -22,15 +22,17 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 use tokio::runtime::Runtime;
 use zeroize::Zeroizing;
-use zevrigo_primitives::{Amount, Block, Decode, Encode, Network, OutPoint, OutputKind};
+use zevrigo_primitives::{
+    Amount, Block, Decode, Encode, Hash32, Network, OutPoint, Output, OutputKind,
+};
 use zevrigo_rpc::{
     ChainInfo, Hex32, MAX_SCAN_PAYLOADS, MempoolOutput, MempoolScan, RpcClient, reject_reason,
 };
 use zevrigo_wallet_core::{
     AddressError, Bip32Error, CHANGE_BRANCH, Coin, ExtendedPrivKey, ExtendedPubKey, HARDENED,
-    KdfParams, Mnemonic, MnemonicError, NONCE_LEN, RECEIVE_BRANCH, SALT_LEN, Sealed, SendError,
-    SendRequest, VaultError, account_key, build_transaction, decode_address, encode_address, seal,
-    unseal,
+    KdfParams, Mnemonic, MnemonicError, NONCE_LEN, Plan, RECEIVE_BRANCH, SALT_LEN, Sealed,
+    SendError, SendRequest, SweepRequest, VaultError, account_key, decode_address, encode_address,
+    plan, plan_sweep, seal, sign_plan, unseal,
 };
 
 use crate::args::{Action, Config};
@@ -134,6 +136,17 @@ pub enum CliError {
     /// Chain aktif node berubah (reorg) selama pemindaian riwayat; ulangi perintahnya.
     #[error("chain node berubah selama pemindaian riwayat; ulangi perintahnya")]
     ChainChanged,
+    /// Jumlah atau biaya kirim berubah sejak pratinjau yang dilihat pengguna (saldo atau mempool berubah). Tidak ada yang
+    /// ditandatangani atau dikirim (RENCANA_T9 F3).
+    #[error(
+        "jumlah atau biaya berubah sejak pratinjau: sekarang penerima menerima {amount} quanta dengan biaya {fee} quanta; periksa lagi"
+    )]
+    PreviewChanged {
+        /// Jumlah yang akan diterima penerima sekarang, dalam quanta.
+        amount: u128,
+        /// Biaya sekarang, dalam quanta.
+        fee: u128,
+    },
 }
 
 impl From<VaultError> for CliError {
@@ -270,6 +283,84 @@ pub struct Sent {
     pub inputs: usize,
     /// Ukuran transaksi dalam byte.
     pub size: usize,
+}
+
+/// Jumlah yang dikirim (RENCANA_T9 F4): jumlah tertentu, atau semua saldo yang bisa dipakai dikurangi biaya.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Spend {
+    /// Penerima menerima jumlah ini; kembalian ke alamat kembalian wallet berikutnya.
+    Amount(Amount),
+    /// Semua UTXO yang bisa dipakai (di luar yang sedang dibelanjakan transaksi di mempool) menjadi input; penerima
+    /// menerima Σ input − biaya, tanpa kembalian (MOD-09 `plan_sweep`).
+    All,
+}
+
+/// Jumlah dan biaya yang sudah dilihat pengguna di pratinjau. [`Cli::send_spend`] tidak menandatangani bila rencana baru
+/// berbeda ([`CliError::PreviewChanged`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Expected {
+    /// Jumlah yang diterima penerima.
+    pub amount: Amount,
+    /// Biaya untuk penambang.
+    pub fee: Amount,
+}
+
+/// Pratinjau kirim (RENCANA_T9 F3): rencana yang sama dengan `send` (pemilihan koin, biaya, kembalian), tanpa password,
+/// tanda tangan, dan pengiriman.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Preview {
+    /// Jumlah yang diterima penerima.
+    pub amount: Amount,
+    /// Biaya untuk penambang.
+    pub fee: Amount,
+    /// Kembalian, jika ada.
+    pub change: Option<Amount>,
+    /// Jumlah input.
+    pub inputs: usize,
+    /// Ukuran transaksi bertanda tangan dalam byte.
+    pub size: usize,
+    /// Tinggi ujung chain saat pratinjau dihitung.
+    pub tip_height: u64,
+}
+
+impl Preview {
+    /// Jumlah dan biaya untuk [`Cli::send_spend`].
+    #[must_use]
+    pub const fn expected(&self) -> Expected {
+        Expected {
+            amount: self.amount,
+            fee: self.fee,
+        }
+    }
+}
+
+/// Rencana kirim dari node dan file wallet, belum ditandatangani.
+struct Planned {
+    wallet: OpenWallet,
+    network_id: Hash32,
+    chosen: Plan,
+    change_index: Option<u32>,
+    tip_height: u64,
+}
+
+impl Planned {
+    fn recipient_amount(&self) -> Amount {
+        self.chosen
+            .outputs()
+            .first()
+            .map_or(Amount::ZERO, Output::amount)
+    }
+
+    fn preview(&self) -> Preview {
+        Preview {
+            amount: self.recipient_amount(),
+            fee: self.chosen.fee(),
+            change: self.chosen.change(),
+            inputs: self.chosen.coins().len(),
+            size: self.chosen.size(),
+            tip_height: self.tip_height,
+        }
+    }
 }
 
 /// Transaksi tertunda di mempool node yang menyentuh wallet.
@@ -767,6 +858,88 @@ impl Cli {
         fee_rate: u128,
         aux_rand: &[u8; 32],
     ) -> Result<Sent, CliError> {
+        let (planned, account) = self.plan_send(
+            datadir,
+            passphrase,
+            from,
+            to,
+            Spend::Amount(amount),
+            fee_rate,
+            |wallet| private_account(wallet, passphrase, password),
+        )?;
+        self.sign_and_send(planned, &account, aux_rand)
+    }
+
+    /// Pratinjau kirim (RENCANA_T9 F3): koin, biaya, dan kembalian dipilih persis seperti [`Cli::send_spend`], tanpa
+    /// password, tanpa tanda tangan, dan tanpa mengirim apa pun ke node. Seperti `balance`, file wallet hanya diperbarui
+    /// dengan indeks alamat yang ditemukan pemindaian.
+    ///
+    /// # Errors
+    ///
+    /// [`CliError::Address`], [`CliError::Send`] (misalnya [`SendError::InsufficientFunds`]), [`CliError::Rpc`],
+    /// [`CliError::WrongNetwork`], atau galat file wallet.
+    pub fn preview(
+        &self,
+        datadir: &Path,
+        passphrase: &str,
+        to: &str,
+        spend: Spend,
+        fee_rate: u128,
+    ) -> Result<Preview, CliError> {
+        let (planned, ()) =
+            self.plan_send(datadir, passphrase, None, to, spend, fee_rate, |_| Ok(()))?;
+        Ok(planned.preview())
+    }
+
+    /// `send` untuk [`Spend`] (jumlah tertentu atau semua saldo, RENCANA_T9 F4), dengan pemeriksaan pratinjau: bila
+    /// `expected` ada dan jumlah atau biaya rencana baru berbeda, tidak ada yang ditandatangani atau dikirim
+    /// ([`CliError::PreviewChanged`]). [`Spend::Amount`] sama dengan [`Cli::send`].
+    ///
+    /// # Errors
+    ///
+    /// Seperti [`Cli::send`], ditambah [`CliError::PreviewChanged`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn send_spend(
+        &self,
+        datadir: &Path,
+        passphrase: &str,
+        password: &str,
+        to: &str,
+        spend: Spend,
+        fee_rate: u128,
+        expected: Option<Expected>,
+        aux_rand: &[u8; 32],
+    ) -> Result<Sent, CliError> {
+        let (planned, account) =
+            self.plan_send(datadir, passphrase, None, to, spend, fee_rate, |wallet| {
+                private_account(wallet, passphrase, password)
+            })?;
+        if let Some(expected) = expected {
+            let now = planned.preview().expected();
+            if now != expected {
+                return Err(CliError::PreviewChanged {
+                    amount: now.amount.as_quanta(),
+                    fee: now.fee.as_quanta(),
+                });
+            }
+        }
+        self.sign_and_send(planned, &account, aux_rand)
+    }
+
+    /// Menyusun rencana kirim: alamat, node, file wallet, lalu `unlock` (kunci akun rahasia untuk kirim, atau tanpa kunci
+    /// untuk pratinjau) sebelum pemindaian, sama urutannya dengan `send` sebelum TSK-M68. UTXO yang sedang dibelanjakan
+    /// transaksi di mempool tidak dipilih; dengan `from` hanya UTXO alamat itu (TSK-M63).
+    #[allow(clippy::too_many_arguments)]
+    fn plan_send<K>(
+        &self,
+        datadir: &Path,
+        passphrase: &str,
+        from: Option<&str>,
+        to: &str,
+        spend: Spend,
+        fee_rate: u128,
+        unlock: impl FnOnce(&OpenWallet) -> Result<K, CliError>,
+    ) -> Result<(Planned, K), CliError> {
         let (recipient_kind, recipient_payload) = decode_address(self.network, to)?;
         let source = match from {
             Some(address) => {
@@ -783,7 +956,7 @@ impl Cli {
             .map_err(rpc_error)?
             .to_hash32();
         let mut wallet = open_wallet(self.network, datadir, passphrase)?;
-        let account = private_account(&wallet, passphrase, password)?;
+        let key = unlock(&wallet)?;
         let scanned = self.scan(&mut wallet)?;
         let source = match source {
             Some((address, kind, payload)) => {
@@ -816,23 +989,58 @@ impl Cli {
                 )
             })
             .collect();
-        let (change_index, change_payload) = match source {
-            Some(payload) => (None, payload),
-            None => {
-                let (index, payload) =
-                    derive_unused(&wallet.public, CHANGE_BRANCH, wallet.file.next_index.change)?;
-                (Some(index), payload)
+        let (chosen, change_index) = match spend {
+            Spend::Amount(amount) => {
+                let (change_index, change_payload) = match source {
+                    Some(payload) => (None, payload),
+                    None => {
+                        let (index, payload) = derive_unused(
+                            &wallet.public,
+                            CHANGE_BRANCH,
+                            wallet.file.next_index.change,
+                        )?;
+                        (Some(index), payload)
+                    }
+                };
+                let request = SendRequest {
+                    recipient_kind,
+                    recipient_payload,
+                    amount,
+                    fee_rate,
+                    change_payload,
+                    tip_height: info.height,
+                };
+                (plan(&coins, &request)?, change_index)
+            }
+            Spend::All => {
+                let request = SweepRequest {
+                    recipient_kind,
+                    recipient_payload,
+                    fee_rate,
+                    tip_height: info.height,
+                };
+                (plan_sweep(&coins, &request)?, None)
             }
         };
-        let request = SendRequest {
-            recipient_kind,
-            recipient_payload,
-            amount,
-            fee_rate,
-            change_payload,
+        let planned = Planned {
+            wallet,
+            network_id,
+            chosen,
+            change_index,
             tip_height: info.height,
         };
-        let (plan, tx) = build_transaction(&coins, &request, &account, &network_id, aux_rand)?;
+        Ok((planned, key))
+    }
+
+    /// Menandatangani rencana dengan `account`, mengirimnya ke mempool node, lalu menaikkan indeks kembalian di file
+    /// wallet jika transaksi memakai output kembalian.
+    fn sign_and_send(
+        &self,
+        mut planned: Planned,
+        account: &ExtendedPrivKey,
+        aux_rand: &[u8; 32],
+    ) -> Result<Sent, CliError> {
+        let tx = sign_plan(&planned.chosen, account, &planned.network_id, aux_rand)?;
         let result = self
             .runtime
             .block_on(self.client.send_raw_transaction(&tx.to_bytes()))
@@ -840,19 +1048,20 @@ impl Cli {
                 Some(reason) => CliError::Rejected { reason },
                 None => rpc_error(error),
             })?;
-        if plan.change().is_some()
-            && let Some(index) = change_index
+        if planned.chosen.change().is_some()
+            && let Some(index) = planned.change_index
         {
-            wallet.file.next_index.change = index.checked_add(1).ok_or(CliError::IndexExhausted)?;
-            wallet_file::save(&wallet.path, &wallet.file)?;
+            planned.wallet.file.next_index.change =
+                index.checked_add(1).ok_or(CliError::IndexExhausted)?;
+            wallet_file::save(&planned.wallet.path, &planned.wallet.file)?;
         }
         Ok(Sent {
             txid: result.txid,
-            amount,
-            fee: plan.fee(),
-            change: plan.change(),
-            inputs: plan.coins().len(),
-            size: plan.size(),
+            amount: planned.recipient_amount(),
+            fee: planned.chosen.fee(),
+            change: planned.chosen.change(),
+            inputs: planned.chosen.coins().len(),
+            size: planned.chosen.size(),
         })
     }
 }

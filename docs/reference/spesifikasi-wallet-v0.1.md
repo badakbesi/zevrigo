@@ -95,6 +95,8 @@ Kunci rahasia di W5–W7 milik frasa contoh yang publik; jangan dipakai untuk ko
 | Sisa kecil | Jika sisa setelah biaya tanpa kembalian tidak cukup untuk biaya output kembalian ditambah 1 quanta, sisa itu ikut menjadi biaya (tanpa output kembalian) |
 | Batas varint | Panjang varint kembalian `L` dicari dari 1 byte ke atas; dipakai `L` terkecil yang memberi kembalian dengan varint ≤ `L`. Di batas varint biaya bisa `tarif × (ukuran + 1)` agar kembalian tetap unik (TSK-M16) |
 | Ukuran maksimum | Transaksi lebih dari 100_000 byte ditolak wallet (sama dengan batas mempool) |
+| Kirim semua (TSK-M68) | `plan_sweep`: semua UTXO yang boleh dipakai (di luar yang sedang dibelanjakan mempool) menjadi input dengan urutan yang sama, satu output penerima sebesar Σ input − biaya, tanpa kembalian. Panjang varint jumlah penerima dicari seperti kembalian (biaya di batas varint bisa sedikit di atas `tarif × ukuran`). Penerima minimal 1 quanta; jika tidak ada UTXO atau Σ input ≤ biaya: saldo tidak cukup. Lebih dari 100_000 byte: ditolak (kirim jumlah yang lebih kecil dulu) |
+| Pratinjau (TSK-M68) | Rencana yang sama (koin, biaya, kembalian, ukuran) bisa dihitung tanpa kunci rahasia dan ditampilkan sebelum password diminta. Saat kirim, rencana disusun ulang; bila jumlah atau biaya berbeda dengan pratinjau, wallet tidak menandatangani (`PreviewChanged`) |
 
 ---
 

@@ -1060,3 +1060,155 @@ fn send_from_spends_only_that_address_and_returns_change_to_it() {
     assert_eq!(harness.node.sent.lock().unwrap().len(), 1);
     assert_eq!(load(&path).unwrap().next_index.change, 1);
 }
+
+#[test]
+fn preview_matches_send_and_send_all_spends_every_spendable_coin() {
+    use zevrigo_primitives::{Decode, Transaction, TxBody};
+
+    use super::{Expected, Preview, Spend};
+
+    /// Kirim semua koin T1 yang matang (5 + 3 ZVRG) dengan tarif 1: 242 byte, biaya 242.
+    const T1_SWEEP: u128 = EIGHT_ZVRG - 242;
+
+    let dir = TempDir::new("preview");
+    wallet_create(Network::Regtest, &dir.0, &[0_u8; 32], "", &lock(1)).unwrap();
+    let harness = Harness::start(Network::Regtest, t1_utxos(), None);
+    let cli = harness.cli();
+    let six = Spend::Amount(Amount::from_quanta(SIX_ZVRG));
+
+    // Pratinjau T1 tanpa password sama dengan hasil kirim; tidak ada yang dikirim ke node.
+    let preview = cli.preview(&dir.0, "", RECIPIENT, six, 1).unwrap();
+    assert_eq!(
+        preview,
+        Preview {
+            amount: Amount::from_quanta(SIX_ZVRG),
+            fee: Amount::from_quanta(284),
+            change: Some(Amount::from_quanta(T1_CHANGE)),
+            inputs: 2,
+            size: 284,
+            tip_height: 150,
+        }
+    );
+    assert!(harness.node.sent.lock().unwrap().is_empty());
+    let sent = cli
+        .send_spend(
+            &dir.0,
+            "",
+            PASSWORD,
+            RECIPIENT,
+            six,
+            1,
+            Some(preview.expected()),
+            &[0_u8; 32],
+        )
+        .unwrap();
+    assert_eq!(sent.fee, Amount::from_quanta(284));
+    assert_eq!(sent.change, Some(Amount::from_quanta(T1_CHANGE)));
+    assert_eq!(
+        harness.node.sent.lock().unwrap().as_slice(),
+        &[decode_hex(T1_TX)]
+    );
+
+    // Kirim semua: koin yang matang menjadi input, satu output tanpa kembalian.
+    let all = cli.preview(&dir.0, "", RECIPIENT, Spend::All, 1).unwrap();
+    assert_eq!(
+        all,
+        Preview {
+            amount: Amount::from_quanta(T1_SWEEP),
+            fee: Amount::from_quanta(242),
+            change: None,
+            inputs: 2,
+            size: 242,
+            tip_height: 150,
+        }
+    );
+    // Pratinjau usang: tidak ada tanda tangan maupun pengiriman.
+    let stale = Expected {
+        amount: all.amount,
+        fee: Amount::from_quanta(241),
+    };
+    let error = cli
+        .send_spend(
+            &dir.0,
+            "",
+            PASSWORD,
+            RECIPIENT,
+            Spend::All,
+            1,
+            Some(stale),
+            &[0_u8; 32],
+        )
+        .unwrap_err();
+    assert!(
+        matches!(&error, CliError::PreviewChanged { amount, fee } if *amount == T1_SWEEP && *fee == 242),
+        "{error}"
+    );
+    assert!(error.to_string().contains("periksa lagi"), "{error}");
+    assert!(matches!(
+        cli.send_spend(
+            &dir.0,
+            "",
+            "password salah",
+            RECIPIENT,
+            Spend::All,
+            1,
+            Some(all.expected()),
+            &[0_u8; 32],
+        ),
+        Err(CliError::WrongPassword)
+    ));
+    assert_eq!(harness.node.sent.lock().unwrap().len(), 1);
+
+    let swept = cli
+        .send_spend(
+            &dir.0,
+            "",
+            PASSWORD,
+            RECIPIENT,
+            Spend::All,
+            1,
+            Some(all.expected()),
+            &[0_u8; 32],
+        )
+        .unwrap();
+    assert_eq!(
+        swept,
+        Sent {
+            txid: Hex32::new([0xee; 32]),
+            amount: Amount::from_quanta(T1_SWEEP),
+            fee: Amount::from_quanta(242),
+            change: None,
+            inputs: 2,
+            size: 242,
+        }
+    );
+    let bytes = harness.node.sent.lock().unwrap()[1].clone();
+    assert_eq!(bytes.len(), 242);
+    let tx = Transaction::from_bytes(&bytes).unwrap();
+    let TxBody::Regular(body) = tx.body() else {
+        unreachable!("transaksi kirim bukan coinbase");
+    };
+    assert_eq!(body.inputs().len(), 2);
+    assert_eq!(body.outputs().len(), 1);
+    assert_eq!(body.outputs()[0].amount(), Amount::from_quanta(T1_SWEEP));
+    // Tanpa kembalian: indeks kembalian tetap 2 (sesudah kirim T1 di atas).
+    let path = wallet_path(Network::Regtest, &dir.0);
+    assert_eq!(
+        load(&path).unwrap().next_index,
+        NextIndex {
+            receive: 2,
+            change: 2
+        }
+    );
+
+    // Tidak ada koin yang bisa dipakai, atau alamat jaringan lain.
+    let empty = Harness::start(Network::Regtest, Vec::new(), None);
+    assert!(matches!(
+        empty.cli().preview(&dir.0, "", RECIPIENT, Spend::All, 1),
+        Err(CliError::Send(SendError::InsufficientFunds { available, .. })) if available == Amount::ZERO
+    ));
+    assert!(matches!(
+        cli.preview(&dir.0, "", TESTNET_RECIPIENT, Spend::All, 1),
+        Err(CliError::Address(AddressError::WrongNetwork))
+    ));
+}

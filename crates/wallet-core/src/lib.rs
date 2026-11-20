@@ -1,6 +1,6 @@
 //! MOD-09: Wallet inti Zevrigo Coin (`ZVRG`): frasa pemulihan BIP39, turunan kunci BIP32, kunci akun publik
 //! untuk watch-only, alamat bech32m (TSK-M15), serta pemilihan koin, penyusunan, dan tanda tangan transaksi kirim
-//! (TSK-M16), sesuai Spesifikasi Wallet v0.1.
+//! (TSK-M16), termasuk kirim semua saldo (TSK-M68), sesuai Spesifikasi Wallet v0.1.
 //!
 //! Crate ini bukan konsensus: chain hanya menyimpan `kind` dan `payload` output. Penjumlahan skalar dan titik
 //! secp256k1, `sighash_v1`, dan BIP340 memakai MOD-02; SHA-256, HMAC-SHA512, dan PBKDF2 memakai `sha2`, `hmac`, dan
@@ -30,7 +30,8 @@ pub use mnemonic::{
     Mnemonic, MnemonicError, NEW_WALLET_ENTROPY_LEN, SEED_ITERATIONS, SEED_LEN, Seed, WORDLIST_LEN,
 };
 pub use send::{
-    Coin, Plan, SINGLE_KEY_WITNESS_SIZE, SendError, SendRequest, build_transaction, plan, sign_plan,
+    Coin, Plan, SINGLE_KEY_WITNESS_SIZE, SendError, SendRequest, SweepRequest, build_transaction,
+    plan, plan_sweep, sign_plan,
 };
 pub use vault::{KdfParams, NONCE_LEN, SALT_LEN, Sealed, VaultError, seal, unseal};
 

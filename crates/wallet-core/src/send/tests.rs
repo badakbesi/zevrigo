@@ -12,7 +12,10 @@ use zevrigo_primitives::{
     Amount, Encode, Hash32, Network, OutPoint, Output, OutputKind, TxBody, Witness,
 };
 
-use super::{Coin, Plan, SendError, SendRequest, build_transaction, plan, sign_plan};
+use super::{
+    Coin, Plan, SendError, SendRequest, SweepRequest, build_transaction, plan, plan_sweep,
+    sign_plan,
+};
 use crate::bip32::{CHANGE_BRANCH, ExtendedPrivKey, RECEIVE_BRANCH, account_key};
 use crate::mnemonic::Mnemonic;
 
@@ -24,6 +27,8 @@ const SEVEN_ZVRG: u128 = 7 * ZVRG;
 /// Kembalian T1: 8 ZVRG − 6 ZVRG − biaya 284.
 const T1_CHANGE: u128 = 2 * ZVRG - 284;
 const ZVRG_MINUS_ONE: u128 = ZVRG - 1;
+/// Kirim semua koin T1 yang matang (5 + 3 ZVRG) dengan tarif 1: biaya 242.
+const T1_SWEEP: u128 = FIVE_ZVRG + THREE_ZVRG - 242;
 const W5_XONLY: &str = "5a6f28253f35e2ff1ab0b086b8c87f731159661157e5be2ca98188369625dc32";
 const W6_XONLY: &str = "8f33099c2cc3739e24c329d9e2d72ff7ce8bb4f4491b1763f69ca8693ea34806";
 const W7_XONLY: &str = "c71cdd713224479fff24b56db524c2385acf09725605e7440de0c34272e2abf5";
@@ -355,6 +360,135 @@ fn sign_rejects_key_mismatch() {
     );
 }
 
+fn sweep(fee_rate: u128) -> SweepRequest {
+    SweepRequest {
+        recipient_kind: OutputKind::SingleKey,
+        recipient_payload: [0x11; 32],
+        fee_rate,
+        tip_height: 10,
+    }
+}
+
+fn one_thousand_one_hundred_coins() -> Vec<Coin> {
+    (0_u32..1_100)
+        .map(|n| {
+            let mut txid = [0_u8; 32];
+            txid.get_mut(..4)
+                .expect("32 byte")
+                .copy_from_slice(&n.to_be_bytes());
+            Coin::new(
+                OutPoint::new(Hash32::from_bytes(txid), 0),
+                Amount::from_quanta(1),
+                [0_u8; 32],
+                0,
+                RECEIVE_BRANCH,
+                0,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn sweep_signs_all_spendable_t1_coins_without_change() {
+    // Koin T1 yang matang di tinggi 150: 2 input (33 byte), satu output dengan varint 9 byte, 2 witness: 242 byte.
+    let request = SweepRequest {
+        recipient_kind: OutputKind::SingleKey,
+        recipient_payload: h32(RECIPIENT),
+        fee_rate: 1,
+        tip_height: 150,
+    };
+    let chosen = plan_sweep(&t1_coins(), &request).expect("cukup");
+    assert_eq!(picked(&chosen), vec![outpoint(0xa1, 0), outpoint(0xb2, 1)]);
+    assert_eq!(chosen.fee(), Amount::from_quanta(242));
+    assert_eq!(chosen.size(), 242);
+    assert_eq!(chosen.change(), None);
+    let expected = Output::new(
+        Amount::from_quanta(T1_SWEEP),
+        OutputKind::SingleKey,
+        h32(RECIPIENT),
+    )
+    .expect("jumlah sah");
+    assert_eq!(chosen.outputs(), &[expected]);
+    let tx = sign_plan(
+        &chosen,
+        &w1_account(),
+        &Hash32::from_bytes([0x5a; 32]),
+        &[0_u8; 32],
+    )
+    .expect("tanda tangan");
+    assert_eq!(tx.encoded_size(), Some(242));
+}
+
+#[test]
+fn sweep_fee_and_varint_edge_cases() {
+    // Satu input, tarif 1: tanpa output penerima 102 byte, output penerima 33 byte + panjang varint jumlah.
+    // (total koin, biaya, jumlah penerima, ukuran)
+    let cases = [
+        // S1: jumlah 863 butuh varint 2 byte.
+        (1_000_u128, 137_u128, 863_u128, 137_usize),
+        // S2: jumlah 127 muat 1 byte.
+        (263, 136, 127, 136),
+        // S3: batas varint. Dengan 1 byte jumlah 128 butuh 2 byte; dengan 2 byte jumlah 127 cukup 1 byte.
+        (264, 137, 127, 136),
+    ];
+    for (total, fee, amount, size) in cases {
+        let chosen = plan_sweep(&[coin(1, 0, total, 0)], &sweep(1)).expect("cukup");
+        assert_eq!(chosen.fee(), Amount::from_quanta(fee), "total {total}");
+        assert_eq!(
+            chosen.outputs().first().map(Output::amount),
+            Some(Amount::from_quanta(amount)),
+            "total {total}"
+        );
+        assert_eq!(chosen.outputs().len(), 1, "total {total}");
+        assert_eq!(chosen.change(), None, "total {total}");
+        assert_eq!(chosen.size(), size, "total {total}");
+    }
+    // Tarif 0: seluruh saldo diterima penerima.
+    let free = plan_sweep(&[coin(1, 0, 1_000, 0)], &sweep(0)).expect("cukup");
+    assert_eq!(free.fee(), Amount::ZERO);
+    assert_eq!(
+        free.outputs().first().map(Output::amount),
+        Some(Amount::from_quanta(1_000))
+    );
+    assert_eq!(free.size(), 137);
+}
+
+#[test]
+fn sweep_rejects_empty_dust_duplicate_and_too_large() {
+    // Hanya koin yang belum matang: tidak ada yang bisa dipakai.
+    assert_eq!(
+        plan_sweep(&[coin(1, 0, 5_000, 12)], &sweep(1)),
+        Err(SendError::InsufficientFunds {
+            available: Amount::ZERO,
+            needed: Amount::from_quanta(1),
+        })
+    );
+    // 136 quanta habis untuk biaya, penerima akan menerima 0.
+    assert_eq!(
+        plan_sweep(&[coin(1, 0, 136, 0)], &sweep(1)),
+        Err(SendError::InsufficientFunds {
+            available: Amount::from_quanta(136),
+            needed: Amount::from_quanta(137),
+        })
+    );
+    assert_eq!(
+        plan_sweep(&[coin(1, 0, 5_000, 0), coin(1, 0, 7_000, 0)], &sweep(1)),
+        Err(SendError::DuplicateCoin {
+            txid: Hash32::from_bytes([1; 32]),
+            index: 0,
+        })
+    );
+    assert_eq!(
+        plan_sweep(&[coin(1, 0, 5_000, 0)], &sweep(u128::MAX)),
+        Err(SendError::AmountOverflow)
+    );
+    // 1_100 koin: 3 + 2 + 1_100 × 33 + 1_100 × 65 + 34 = 107_839 byte, lebih dari batas blok.
+    assert_eq!(
+        plan_sweep(&one_thousand_one_hundred_coins(), &sweep(0)),
+        Err(SendError::TooLarge { size: 107_839 })
+    );
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
 
@@ -382,5 +516,38 @@ proptest! {
         prop_assert!(chosen.fee().as_quanta() >= fee_rate.checked_mul(size).expect("tidak meluap"));
         prop_assert!(chosen.coins().iter().all(|c| c.spendable_at() <= 11));
         prop_assert_eq!(chosen.outputs().first().map(Output::amount), Some(Amount::from_quanta(amount)));
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(256))]
+
+    #[test]
+    fn prop_sweep_spends_every_spendable_coin(
+        raw in prop::collection::vec(
+            (0_u8..4, prop_oneof![Just(0_u32), Just(1), Just(127), Just(128), Just(300)], 1_u128..=10_000_000_000_000_000_000_000, 0_u64..=12),
+            1..6,
+        ),
+        fee_rate in prop_oneof![Just(0_u128), Just(1), Just(2), Just(1_000), Just(1_000_000)],
+    ) {
+        let mut unique = BTreeMap::new();
+        for (fill, index, quanta, spendable_at) in raw {
+            unique.entry((fill, index)).or_insert(coin(fill, index, quanta, spendable_at));
+        }
+        let coins: Vec<Coin> = unique.into_values().collect();
+        let Ok(chosen) = plan_sweep(&coins, &sweep(fee_rate)) else {
+            return Ok(());
+        };
+        let spendable = coins.iter().filter(|c| c.spendable_at() <= 11).count();
+        prop_assert_eq!(chosen.coins().len(), spendable);
+        prop_assert_eq!(chosen.outputs().len(), 1);
+        prop_assert_eq!(chosen.change(), None);
+        let inputs = Amount::checked_sum(chosen.coins().iter().map(Coin::amount)).expect("tidak meluap");
+        let outputs = Amount::checked_sum(chosen.outputs().iter().map(Output::amount)).expect("tidak meluap");
+        prop_assert_eq!(inputs, outputs.checked_add(chosen.fee()).expect("tidak meluap"));
+        let size = u128::try_from(chosen.size()).expect("muat u128");
+        prop_assert!(chosen.fee().as_quanta() >= fee_rate.checked_mul(size).expect("tidak meluap"));
+        let ceiling = size.checked_add(18).and_then(|bytes| fee_rate.checked_mul(bytes)).expect("tidak meluap");
+        prop_assert!(chosen.fee().as_quanta() <= ceiling);
     }
 }

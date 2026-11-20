@@ -24,4 +24,5 @@ Menyediakan pustaka inti pengelolaan kunci, pemilihan UTXO, penyusunan, dan pena
 ## Task terkait
 - [TSK-M15](../tasks/TSK-M15-wallet-frasa-turunan-alamat.md) — 🟢 selesai (modul `mnemonic`, `bip32`, `address`)
 - [TSK-M16](../tasks/TSK-M16-wallet-kirim.md) — 🟢 selesai (modul `send`: `plan`, `sign_plan`, `build_transaction`)
+- [TSK-M68](../tasks/TSK-M68-pratinjau-kirim-semua.md) — 🟡 `plan_sweep` (kirim semua saldo, tanpa kembalian)
 - [TSK-M37](../tasks/TSK-M37-enkripsi-wallet.md) — 🟢 selesai (modul `vault`: Argon2id + XChaCha20-Poly1305, DEC-27; frasa, seed, dan kunci dihapus dari memori)
