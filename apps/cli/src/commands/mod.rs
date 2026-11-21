@@ -18,6 +18,7 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use thiserror::Error;
 use tokio::runtime::Runtime;
@@ -240,6 +241,24 @@ pub fn terminal_password(prompt: PasswordPrompt) -> Result<Zeroizing<String>, Cl
         .map_err(CliError::PasswordInput)
 }
 
+/// Berapa kali satu panggilan RPC dicoba lagi bila gerbang menjawab `429` (batas laju), sebelum galatnya dikembalikan
+/// (TSK-M70).
+pub const RATE_LIMIT_RETRIES: u32 = 8;
+
+/// Jeda sebelum mencoba lagi panggilan yang ditolak batas laju, sama dengan `Retry-After: 1` gerbang RPC demo (TSK-M70).
+pub const RATE_LIMIT_WAIT: Duration = Duration::from_secs(1);
+
+/// Tembolok riwayat disimpan setiap kelipatan tinggi ini selama pemindaian, agar pemindaian yang terputus (galat jaringan,
+/// batas laju, aplikasi ditutup) dilanjutkan dari blok terakhir yang tersimpan, bukan dari genesis (TSK-M70).
+pub const HISTORY_SAVE_EVERY: u64 = 100;
+
+/// Apakah keterangan galat klien RPC adalah jawaban HTTP `429` (batas laju gerbang RPC, MOD-18). Klien MOD-08 melaporkannya
+/// sebagai galat transport "Request rejected `429`".
+#[must_use]
+pub fn is_rate_limited(message: &str) -> bool {
+    message.contains("rejected `429`")
+}
+
 /// Galat RPC sebagai teks, agar tipe galat klien tidak ikut terekspos.
 fn rpc_error(error: impl core::fmt::Display) -> CliError {
     CliError::Rpc {
@@ -445,6 +464,33 @@ fn encrypted_file(
     ))
 }
 
+/// Menyimpan tembolok riwayat `state`, lalu indeks alamat terpakai tertinggi yang ditemukan `keys` ke file wallet jika lebih
+/// tinggi dari yang tersimpan (dipakai di akhir `history` dan setiap [`HISTORY_SAVE_EVERY`] blok).
+fn save_history(
+    wallet: &mut OpenWallet,
+    keys: &WalletKeys,
+    path: &Path,
+    identity: Hex32,
+    state: &HistoryState,
+) -> Result<(), CliError> {
+    history::save(path, wallet.network, identity, state).map_err(|error| {
+        CliError::HistoryFile {
+            path: path.display().to_string(),
+            message: error.to_string(),
+        }
+    })?;
+    let found = keys.next_index();
+    let next_index = NextIndex {
+        receive: found.receive.max(wallet.file.next_index.receive),
+        change: found.change.max(wallet.file.next_index.change),
+    };
+    if next_index != wallet.file.next_index {
+        wallet.file.next_index = next_index;
+        wallet_file::save(&wallet.path, &wallet.file)?;
+    }
+    Ok(())
+}
+
 /// Alamat pertama yang sah di `branch` mulai indeks `start`: `(indeks, x-only)`.
 fn derive_unused(
     account: &ExtendedPubKey,
@@ -589,6 +635,8 @@ pub struct Cli {
     client: RpcClient,
     runtime: Runtime,
     network: Network,
+    /// Jeda sebelum mencoba lagi panggilan yang ditolak batas laju ([`RATE_LIMIT_WAIT`]; lebih pendek di test).
+    retry_wait: Duration,
 }
 
 impl Cli {
@@ -609,7 +657,30 @@ impl Cli {
             client,
             runtime,
             network,
+            retry_wait: RATE_LIMIT_WAIT,
         })
+    }
+
+    /// Menjalankan satu panggilan RPC. Bila gerbang menjawab `429` ([`is_rate_limited`]), panggilan diulang sesudah
+    /// [`RATE_LIMIT_WAIT`], paling banyak [`RATE_LIMIT_RETRIES`] kali (TSK-M70). Galat lain langsung dikembalikan. Aman untuk
+    /// `send_raw_transaction`: gerbang menolak `429` sebelum badan permintaan dibaca, jadi transaksi belum diteruskan.
+    fn retry<T, E, F>(&self, request: impl Fn() -> F) -> Result<T, E>
+    where
+        E: core::fmt::Display,
+        F: core::future::Future<Output = Result<T, E>>,
+    {
+        let mut retries = 0_u32;
+        loop {
+            match self.runtime.block_on(request()) {
+                Err(error)
+                    if retries < RATE_LIMIT_RETRIES && is_rate_limited(&error.to_string()) =>
+                {
+                    retries = retries.saturating_add(1);
+                    std::thread::sleep(self.retry_wait);
+                }
+                result => return result,
+            }
+        }
     }
 
     /// `info`: ringkasan chain dari node.
@@ -618,8 +689,7 @@ impl Cli {
     ///
     /// [`CliError::Rpc`].
     pub fn info(&self) -> Result<ChainInfo, CliError> {
-        self.runtime
-            .block_on(self.client.get_chain_info())
+        self.retry(|| self.client.get_chain_info())
             .map_err(rpc_error)
     }
 
@@ -638,8 +708,7 @@ impl Cli {
     /// Memindai wallet, lalu menyimpan indeks berikutnya jika pemindaian menemukan indeks terpakai yang lebih tinggi.
     fn scan(&self, wallet: &mut OpenWallet) -> Result<ScanResult, CliError> {
         let result = scan_wallet(&wallet.public, wallet.file.next_index, |payloads| {
-            self.runtime
-                .block_on(self.client.scan_utxos(payloads))
+            self.retry(|| self.client.scan_utxos(payloads))
                 .map_err(rpc_error)
         })?;
         if result.next_index != wallet.file.next_index {
@@ -654,8 +723,7 @@ impl Cli {
         let mut scan = MempoolScan::default();
         for chunk in payloads.chunks(MAX_SCAN_PAYLOADS) {
             let part = self
-                .runtime
-                .block_on(self.client.scan_mempool(chunk))
+                .retry(|| self.client.scan_mempool(chunk))
                 .map_err(rpc_error)?;
             scan.spent.extend(part.spent);
             scan.outputs.extend(part.outputs);
@@ -665,8 +733,7 @@ impl Cli {
 
     /// ID blok chain aktif di `height`.
     fn block_hash(&self, height: u64) -> Result<Hex32, CliError> {
-        self.runtime
-            .block_on(self.client.get_block_hash(height))
+        self.retry(|| self.client.get_block_hash(height))
             .map_err(rpc_error)
     }
 
@@ -745,8 +812,10 @@ impl Cli {
     /// `history`: riwayat transaksi wallet, terbaru dulu (transaksi tertunda di mempool paling atas).
     ///
     /// Blok dibaca dari node mulai sesudah blok ujung tembolok `history.json`, atau dari genesis jika tembolok tidak ada,
-    /// tidak sah, milik wallet lain, atau blok ujungnya tidak lagi di chain aktif (reorg). Tembolok disimpan sesudahnya.
-    /// Indeks alamat terpakai yang lebih tinggi yang ditemukan disimpan ke file wallet, seperti `balance`.
+    /// tidak sah, milik wallet lain, atau blok ujungnya tidak lagi di chain aktif (reorg). Tembolok disimpan sesudahnya, dan
+    /// juga setiap [`HISTORY_SAVE_EVERY`] blok selama pemindaian (TSK-M70), sehingga pemindaian yang gagal di tengah
+    /// dilanjutkan dari sana. Indeks alamat terpakai yang lebih tinggi yang ditemukan disimpan ke file wallet, seperti
+    /// `balance`.
     ///
     /// # Errors
     ///
@@ -770,8 +839,7 @@ impl Cli {
         for height in start..=info.height {
             let block_id = self.block_hash(height)?;
             let found = self
-                .runtime
-                .block_on(self.client.get_block(block_id))
+                .retry(|| self.client.get_block(block_id))
                 .map_err(rpc_error)?;
             if found.height != height || previous.is_some_and(|id| id != found.prev_block_id) {
                 return Err(CliError::ChainChanged);
@@ -780,6 +848,9 @@ impl Cli {
             state.apply_block(&mut keys, &block, &found.txids, height)?;
             state.tip = Some(HistoryTip { height, block_id });
             previous = Some(block_id);
+            if height.is_multiple_of(HISTORY_SAVE_EVERY) && height < info.height {
+                save_history(&mut wallet, &keys, &path, identity, &state)?;
+            }
         }
         let scan = self.mempool_scan(&keys.payloads())?;
         let outputs: Vec<MempoolOutput> = scan
@@ -790,21 +861,7 @@ impl Cli {
             })
             .collect();
         let pending = state.pending_entries(&scan.spent, &outputs)?;
-        history::save(&path, self.network, identity, &state).map_err(|error| {
-            CliError::HistoryFile {
-                path: path.display().to_string(),
-                message: error.to_string(),
-            }
-        })?;
-        let found = keys.next_index();
-        let next_index = NextIndex {
-            receive: found.receive.max(wallet.file.next_index.receive),
-            change: found.change.max(wallet.file.next_index.change),
-        };
-        if next_index != wallet.file.next_index {
-            wallet.file.next_index = next_index;
-            wallet_file::save(&wallet.path, &wallet.file)?;
-        }
+        save_history(&mut wallet, &keys, &path, identity, &state)?;
         let mut entries = pending;
         entries.extend(state.entries().iter().rev().cloned());
         Ok(History {
@@ -951,8 +1008,7 @@ impl Cli {
         };
         let info = self.checked_info()?;
         let network_id = self
-            .runtime
-            .block_on(self.client.get_block_hash(0))
+            .retry(|| self.client.get_block_hash(0))
             .map_err(rpc_error)?
             .to_hash32();
         let mut wallet = open_wallet(self.network, datadir, passphrase)?;
@@ -1041,9 +1097,9 @@ impl Cli {
         aux_rand: &[u8; 32],
     ) -> Result<Sent, CliError> {
         let tx = sign_plan(&planned.chosen, account, &planned.network_id, aux_rand)?;
+        let bytes = tx.to_bytes();
         let result = self
-            .runtime
-            .block_on(self.client.send_raw_transaction(&tx.to_bytes()))
+            .retry(|| self.client.send_raw_transaction(&bytes))
             .map_err(|error| match reject_reason(&error) {
                 Some(reason) => CliError::Rejected { reason },
                 None => rpc_error(error),

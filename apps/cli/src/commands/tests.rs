@@ -1212,3 +1212,124 @@ fn preview_matches_send_and_send_all_spends_every_spendable_coin() {
         Err(CliError::Address(AddressError::WrongNetwork))
     ));
 }
+
+/// Versi JSON-RPC di jawaban server tiruan [`rate_limited_server`].
+const JSONRPC_VERSION: &str = concat!("2", ".", "0");
+
+/// Server HTTP tiruan untuk uji batas laju (TSK-M70): `rejects` permintaan pertama dijawab `429` seperti gerbang RPC demo,
+/// sesudahnya galat JSON-RPC `-32601` dengan `id` permintaan. Setiap jawaban menutup koneksi. Mengembalikan URL dan
+/// penghitung permintaan.
+fn rate_limited_server(rejects: usize) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    use std::io::Write as _;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let count = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&count);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else {
+                continue;
+            };
+            let Some(body) = read_http_body(&mut stream) else {
+                continue;
+            };
+            let response = if seen.fetch_add(1, Ordering::SeqCst) < rejects {
+                let text = serde_json::json!({ "error": "rate_limited" }).to_string();
+                format!(
+                    "HTTP/1.1 429 Too Many Requests\r\ncontent-type: application/json\r\nretry-after: 1\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{text}",
+                    text.len()
+                )
+            } else {
+                let id = serde_json::from_str::<serde_json::Value>(&body)
+                    .ok()
+                    .and_then(|value| value.get("id").cloned())
+                    .unwrap_or(serde_json::Value::Null);
+                // Versi JSON-RPC lewat konstanta: pemindai larangan membaca angka di antara pasangan kutip sebagai pecahan.
+                let text = serde_json::json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": id,
+                    "error": { "code": -32_601, "message": "metode tiruan" },
+                })
+                .to_string();
+                format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{text}",
+                    text.len()
+                )
+            };
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+    (url, count)
+}
+
+/// Badan satu permintaan HTTP (sampai `content-length`), atau `None` bila koneksi tertutup lebih dulu.
+fn read_http_body(stream: &mut std::net::TcpStream) -> Option<String> {
+    use std::io::Read as _;
+
+    let mut data = Vec::new();
+    let mut buf = [0_u8; 4096];
+    loop {
+        if let Some(end) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&data[..end]).into_owned();
+            let length = head
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    if name.trim().eq_ignore_ascii_case("content-length") {
+                        value.trim().parse::<usize>().ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
+            let start = end + 4;
+            if data.len() >= start + length {
+                return Some(String::from_utf8_lossy(&data[start..start + length]).into_owned());
+            }
+        }
+        let n = stream.read(&mut buf).ok()?;
+        if n == 0 {
+            return None;
+        }
+        data.extend_from_slice(&buf[..n]);
+    }
+}
+
+#[test]
+fn rate_limited_calls_are_retried_then_reported() {
+    use std::sync::atomic::Ordering;
+
+    use super::{RATE_LIMIT_RETRIES, is_rate_limited};
+
+    assert!(is_rate_limited("Request rejected `429`"));
+    assert!(!is_rate_limited("Request rejected `502`"));
+    assert!(!is_rate_limited("Networking or low-level protocol error"));
+
+    // Dua jawaban 429 dicoba lagi; jawaban ketiga (galat JSON-RPC biasa) dikembalikan tanpa dicoba lagi.
+    let (url, count) = rate_limited_server(2);
+    let mut cli = Cli::connect(&url, Network::Regtest).unwrap();
+    cli.retry_wait = std::time::Duration::from_millis(10);
+    let error = cli.info().unwrap_err();
+    assert_eq!(count.load(Ordering::SeqCst), 3);
+    assert!(
+        matches!(&error, CliError::Rpc { message } if message.contains("metode tiruan") && !is_rate_limited(message)),
+        "{error}"
+    );
+
+    // Selalu 429: dicoba RATE_LIMIT_RETRIES kali lagi, lalu galat 429 dikembalikan.
+    let (url, count) = rate_limited_server(usize::MAX);
+    let mut cli = Cli::connect(&url, Network::Regtest).unwrap();
+    cli.retry_wait = std::time::Duration::from_millis(10);
+    let error = cli.info().unwrap_err();
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        usize::try_from(RATE_LIMIT_RETRIES).unwrap() + 1
+    );
+    assert!(
+        matches!(&error, CliError::Rpc { message } if is_rate_limited(message)),
+        "{error}"
+    );
+}

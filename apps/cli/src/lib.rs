@@ -16,10 +16,11 @@ pub use args::{
     Action, ArgError, Command, Config, DEFAULT_FEE_RATE, USAGE, default_rpc_url, parse_args,
 };
 pub use commands::{
-    Balance, Cli, CliError, Expected, MIN_PASSWORD_CHARS, PASSWORD_ENV, PasswordPrompt, Preview,
-    Protection, Sent, Spend, check_new_password, format_balance, format_history, format_info,
-    format_sent, next_address, os_random, run, show_phrase, terminal_password, wallet_create,
-    wallet_encrypt, wallet_restore,
+    Balance, Cli, CliError, Expected, HISTORY_SAVE_EVERY, MIN_PASSWORD_CHARS, PASSWORD_ENV,
+    PasswordPrompt, Preview, Protection, RATE_LIMIT_RETRIES, RATE_LIMIT_WAIT, Sent, Spend,
+    check_new_password, format_balance, format_history, format_info, format_sent, is_rate_limited,
+    next_address, os_random, run, show_phrase, terminal_password, wallet_create, wallet_encrypt,
+    wallet_restore,
 };
 pub use history::{
     History, HistoryEntry, HistoryError, HistoryState, HistoryTip, WalletKeys, history_path,
