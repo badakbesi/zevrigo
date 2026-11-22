@@ -4,8 +4,8 @@ use super::{RpcClient, error_code};
 async fn new_accepts_http_and_https_urls() {
     for url in [
         "http://127.0.0.1:28801",
-        "https://zevrigo-rpc.ratuaurion.store",
-        "https://zevrigo-rpc.ratuaurion.store/",
+        "https://demo-gerbang-rpc.zevrigo.online",
+        "https://demo-gerbang-rpc.zevrigo.online/",
     ] {
         assert!(RpcClient::new(url).is_ok(), "{url}");
     }

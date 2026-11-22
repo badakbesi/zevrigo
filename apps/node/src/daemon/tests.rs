@@ -228,7 +228,7 @@ fn parses_testnet() {
 #[test]
 fn parses_websocket_options() {
     let seed = concat!(
-        "/dns4/zevrigo-seed.ratuaurion.store/tcp/443/tls/sni/zevrigo-seed.ratuaurion.store/ws",
+        "/dns4/demo-seed-p2p.zevrigo.online/tcp/443/tls/sni/demo-seed-p2p.zevrigo.online/ws",
         "/p2p/12D3KooWQK1wnefoLrcVHbbnf5tLzbopUd3K3bFAoJpA7YJgL5pV"
     );
     let Ok(Command::Run(config)) = parse_args(args(&[

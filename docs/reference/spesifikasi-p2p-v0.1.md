@@ -191,7 +191,7 @@ terpotong, chain demo terbelah sekitar 5 jam). Rekan itu dipilih operator sendir
 - `--p2p-ws-port <port>` (TSK-M45) menambah alamat dengar WebSocket `/ip4/127.0.0.1/tcp/<port>/ws` (`0` = port bebas) dan
   mencetak satu baris `p2p-ws: /ip4/127.0.0.1/tcp/<port>/ws/p2p/<PeerId>`. Tanpa opsi ini node tidak mendengar WebSocket.
 - `--connect` menerima alamat IP maupun nama, TCP maupun WebSocket, misalnya
-  `/dns4/zevrigo-seed.ratuaurion.store/tcp/443/tls/sni/zevrigo-seed.ratuaurion.store/ws/p2p/<PeerId>`.
+  `/dns4/demo-seed-p2p.zevrigo.online/tcp/443/tls/sni/demo-seed-p2p.zevrigo.online/ws/p2p/<PeerId>`.
 - Log rekan (terhubung, putus, sanksi) ke stderr lewat `tracing`.
 
 ---

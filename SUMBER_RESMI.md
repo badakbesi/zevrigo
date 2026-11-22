@@ -1,7 +1,8 @@
 # Sumber resmi Zevrigo (ZVRG)
 
 > Ditetapkan pencipta 18 November 2026 (DEC-40). Dokumen ini adalah rujukan untuk mengenali Zevrigo yang asli: jaringan, repo,
-> rilis, domain, dan logo resmi. Hanya pencipta yang mengubahnya, lewat repo inti `badakbesi/zevrigo`.
+> rilis, domain, dan logo resmi. Hanya pencipta yang mengubahnya, lewat repo inti `badakbesi/zevrigo`. Domain resmi
+> `zevrigo.online` sejak 22 November 2026 (DEC-42).
 
 Zevrigo terdiri dari **pusat publik tunggal** dan **bagian desentral**:
 
@@ -38,15 +39,22 @@ disebut dokumen sebelum tanggal itu merujuk riwayat tersebut.
 Genesis regtest sama di setiap komputer, jadi jaringan demo resmi dikenali dari seed resminya:
 
 ```
-/dns4/zevrigo-seed.ratuaurion.store/tcp/443/tls/sni/zevrigo-seed.ratuaurion.store/ws/p2p/12D3KooWABPBsu8gZWtL7bbeEPjg6gwRPDbp3GZidpTeUC95rRDo
+/dns4/demo-seed-p2p.zevrigo.online/tcp/443/tls/sni/demo-seed-p2p.zevrigo.online/ws/p2p/12D3KooWABPBsu8gZWtL7bbeEPjg6gwRPDbp3GZidpTeUC95rRDo
 ```
 
-| Layanan demo | Alamat |
+| Layanan | Alamat |
 |---|---|
-| Explorer | https://zevrigo.ratuaurion.store |
-| Gerbang RPC untuk wallet | https://zevrigo-rpc.ratuaurion.store |
-| Faucet | https://zevrigo-faucet.ratuaurion.store |
-| Blog | https://zevrigo-blog.ratuaurion.store |
+| Situs utama (blog) | https://zevrigo.online |
+| Explorer demo | https://demo-explorer.zevrigo.online |
+| Gerbang RPC demo untuk wallet | https://demo-gerbang-rpc.zevrigo.online |
+| Faucet demo | https://demo-faucet.zevrigo.online |
+
+**Alamat lama (peralihan, DEC-42).** Wallet 0.3.1 dan aplikasi Explorer 0.1.0 memakai alamat lama. Alamat ini dilayani pusat
+yang sama sampai wallet dan aplikasi Explorer versi baru terbit, dan paling sedikit 30 hari sesudahnya: explorer
+https://zevrigo.ratuaurion.store, gerbang RPC https://zevrigo-rpc.ratuaurion.store, faucet
+https://zevrigo-faucet.ratuaurion.store, dan seed
+`/dns4/zevrigo-seed.ratuaurion.store/tcp/443/tls/sni/zevrigo-seed.ratuaurion.store/ws/p2p/12D3KooWABPBsu8gZWtL7bbeEPjg6gwRPDbp3GZidpTeUC95rRDo`.
+Subdomain lain di `ratuaurion.store` bukan bagian Zevrigo.
 
 Jaringan dengan genesis lain, atau yang tidak tersambung ke seed resmi, bukan jaringan Zevrigo walaupun memakai kode yang sama.
 Di Proof of Work siapa pun bisa menjalankan node dengan aturan berbeda; chain resmi adalah chain sah dengan kerja kumulatif

@@ -37,9 +37,9 @@ fn object<T: Serialize>(params: &T) -> Result<Map<String, Value>, ClientError> {
 }
 
 impl RpcClient {
-    /// Membuat klien ke `url`, misalnya `http://127.0.0.1:28801` atau `https://zevrigo-rpc.ratuaurion.store`. Ukuran
-    /// request dibatasi [`MAX_REQUEST_BYTES`]. Untuk `https://`, sertifikat server diperiksa terhadap daftar akar sistem
-    /// operasi saat koneksi pertama.
+    /// Membuat klien ke `url`, misalnya `http://127.0.0.1:28801` atau `https://demo-gerbang-rpc.zevrigo.online`.
+    /// Ukuran request dibatasi [`MAX_REQUEST_BYTES`]. Untuk `https://`, sertifikat server diperiksa terhadap daftar akar
+    /// sistem operasi saat koneksi pertama.
     ///
     /// # Errors
     ///

@@ -94,11 +94,12 @@ Aplikasi punya repo sendiri sejak DEC-39, di folder induk `zevrigo_lab` di sebel
 | [zevrigo-demo](https://github.com/badakbesi/zevrigo-demo) | Layanan demo regtest (MOD-18), paket Docker, dan jaringan demo publik di VPS dan PC (DEC-38) |
 | [zevrigo-blog](https://github.com/badakbesi/zevrigo-blog) | Blog resmi, situs statis |
 
-Jaringan demo regtest publik: explorer https://zevrigo.ratuaurion.store. Node lain bergabung ke seed dengan:
+Situs utama: https://zevrigo.online. Jaringan demo regtest publik: explorer https://demo-explorer.zevrigo.online. Node lain bergabung ke seed
+dengan:
 
 ```bash
 zevrigo-node --regtest --datadir ~/.zevrigo \
-  --connect /dns4/zevrigo-seed.ratuaurion.store/tcp/443/tls/sni/zevrigo-seed.ratuaurion.store/ws/p2p/<PeerId seed>
+  --connect /dns4/demo-seed-p2p.zevrigo.online/tcp/443/tls/sni/demo-seed-p2p.zevrigo.online/ws/p2p/<PeerId seed>
 ```
 
 ## Sumber resmi
