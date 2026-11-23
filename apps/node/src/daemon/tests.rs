@@ -1,3 +1,4 @@
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 
 use zevrigo_network::Multiaddr;
@@ -6,6 +7,7 @@ use zevrigo_primitives::Network;
 use super::{
     ArgError, Command, Config, REGTEST_SEEDS, USAGE, chain_path, default_p2p_port, dial_addresses,
     official_seeds, p2p_key_path, p2p_listen_address, p2p_ws_listen_address, parse_args,
+    peers_path,
 };
 
 fn args(list: &[&str]) -> Vec<String> {
@@ -18,6 +20,8 @@ fn run_config(datadir: &str, rpc_port: u16) -> Command {
         datadir: PathBuf::from(datadir),
         rpc_port,
         p2p_port: 28_800,
+        p2p_bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
+        public: Vec::new(),
         p2p_ws_port: None,
         connect: Vec::new(),
         official_seeds: false,
@@ -141,7 +145,7 @@ fn parses_p2p_options() {
         PathBuf::from("d").join("regtest").join("p2p_key")
     );
     assert_eq!(
-        p2p_listen_address(28_800).unwrap(),
+        p2p_listen_address(IpAddr::V4(Ipv4Addr::LOCALHOST), 28_800).unwrap(),
         first.parse::<Multiaddr>().unwrap()
     );
     assert_eq!(default_p2p_port(Network::Regtest), 28_800);
@@ -199,6 +203,8 @@ fn parses_testnet() {
             datadir: PathBuf::from("d"),
             rpc_port: 18_801,
             p2p_port: 18_800,
+            p2p_bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            public: Vec::new(),
             p2p_ws_port: None,
             connect: Vec::new(),
             official_seeds: true,
@@ -380,4 +386,99 @@ fn official_seeds_only_when_asked_on_regtest() {
         ArgError::SeedConflict.to_string(),
         "--seed-resmi dan --tanpa-seed-resmi tidak boleh digabung"
     );
+}
+
+#[test]
+fn parses_inbound_options() {
+    let public = "/ip4/203.0.113.7/tcp/28800";
+    let seed_public =
+        "/dns4/demo-seed-p2p.zevrigo.online/tcp/443/tls/sni/demo-seed-p2p.zevrigo.online/ws";
+    let Ok(Command::Run(config)) = parse_args(args(&[
+        "--regtest",
+        "--datadir",
+        "d",
+        "--p2p-bind",
+        "0.0.0.0",
+        "--p2p-publik",
+        public,
+        "--p2p-publik",
+        seed_public,
+    ])) else {
+        unreachable!("argumen sah");
+    };
+    assert_eq!(config.p2p_bind, IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+    assert_eq!(
+        config.public,
+        vec![
+            public.parse::<Multiaddr>().unwrap(),
+            seed_public.parse::<Multiaddr>().unwrap()
+        ]
+    );
+    assert_eq!(
+        p2p_listen_address(config.p2p_bind, 28_800).unwrap(),
+        "/ip4/0.0.0.0/tcp/28800".parse::<Multiaddr>().unwrap()
+    );
+    assert_eq!(
+        p2p_listen_address(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), 1).unwrap(),
+        "/ip6/::/tcp/1".parse::<Multiaddr>().unwrap()
+    );
+    assert_eq!(
+        peers_path(&config),
+        PathBuf::from("d").join("regtest").join("peers.json")
+    );
+
+    let Ok(Command::Run(plain)) = parse_args(args(&["--regtest", "--datadir", "d"])) else {
+        unreachable!("argumen sah");
+    };
+    assert_eq!(plain.p2p_bind, IpAddr::V4(Ipv4Addr::LOCALHOST));
+    assert!(plain.public.is_empty());
+    assert!(USAGE.contains("--p2p-bind"));
+    assert!(USAGE.contains("--p2p-publik"));
+    assert!(USAGE.contains("peers.json"));
+
+    let with_peer =
+        "/ip4/203.0.113.7/tcp/1/p2p/12D3KooWQK1wnefoLrcVHbbnf5tLzbopUd3K3bFAoJpA7YJgL5pV";
+    let cases: [(&[&str], ArgError); 6] = [
+        (
+            &["--regtest", "--datadir", "x", "--p2p-bind", "localhost"],
+            ArgError::InvalidBind("localhost".to_owned()),
+        ),
+        (
+            &[
+                "--regtest",
+                "--datadir",
+                "x",
+                "--p2p-bind",
+                "0.0.0.0",
+                "--p2p-bind",
+                "::",
+            ],
+            ArgError::Duplicate("--p2p-bind"),
+        ),
+        (
+            &["--regtest", "--datadir", "x", "--p2p-bind"],
+            ArgError::MissingValue("--p2p-bind"),
+        ),
+        (
+            &[
+                "--regtest",
+                "--datadir",
+                "x",
+                "--p2p-publik",
+                "/ip4/203.0.113.7/udp/1",
+            ],
+            ArgError::InvalidPublic("/ip4/203.0.113.7/udp/1".to_owned()),
+        ),
+        (
+            &["--regtest", "--datadir", "x", "--p2p-publik", with_peer],
+            ArgError::InvalidPublic(with_peer.to_owned()),
+        ),
+        (
+            &["--regtest", "--datadir", "x", "--p2p-publik"],
+            ArgError::MissingValue("--p2p-publik"),
+        ),
+    ];
+    for (list, expected) in cases {
+        assert_eq!(parse_args(args(list)), Err(expected), "{list:?}");
+    }
 }

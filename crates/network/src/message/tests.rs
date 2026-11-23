@@ -1,8 +1,10 @@
 use zevrigo_primitives::{BlockHeight, DecodeError, Encode, HEADER_SIZE, Hash32};
 
+use libp2p::Multiaddr;
+
 use super::{
-    Ack, Blocks, GetBlocks, GetHeaders, Headers, MAX_BLOCK_IDS, MAX_HEADERS, MAX_LOCATOR,
-    MessageError, STATUS_SIZE, STATUS_VERSION, Status, Wire,
+    Ack, Addrs, Blocks, GetAddr, GetBlocks, GetHeaders, Headers, MAX_ADDRS, MAX_BLOCK_IDS,
+    MAX_HEADERS, MAX_LOCATOR, MessageError, STATUS_SIZE, STATUS_VERSION, Status, Wire,
 };
 use crate::test_support::{id, sample_block, sample_header, sample_tx};
 
@@ -225,4 +227,67 @@ fn every_message_rejects_trailing_bytes() {
         Err(trailing())
     );
     assert_eq!(Ack::from_wire(&[0, 0]), Err(trailing()));
+}
+
+#[test]
+fn getaddr_is_empty_and_rejects_extra_bytes() {
+    assert!(GetAddr.to_wire().is_empty());
+    assert_eq!(GetAddr::from_wire(&[]), Ok(GetAddr));
+    assert_eq!(GetAddr::from_wire(&[0]), Err(trailing()));
+}
+
+#[test]
+fn addrs_round_trip_and_enforce_limits() {
+    let seed: Multiaddr = concat!(
+        "/dns4/demo-seed-p2p.zevrigo.online/tcp/443/tls/sni/demo-seed-p2p.zevrigo.online/ws",
+        "/p2p/12D3KooWABPBsu8gZWtL7bbeEPjg6gwRPDbp3GZidpTeUC95rRDo"
+    )
+    .parse()
+    .unwrap();
+    let local: Multiaddr =
+        "/ip4/127.0.0.1/tcp/28800/p2p/12D3KooWQK1wnefoLrcVHbbnf5tLzbopUd3K3bFAoJpA7YJgL5pV"
+            .parse()
+            .unwrap();
+    let addrs = Addrs {
+        addresses: vec![seed.clone(), local.clone()],
+    };
+    let bytes = addrs.to_wire();
+    let raw = seed.to_vec();
+    assert_eq!(bytes[0], 2);
+    assert_eq!(usize::from(bytes[1]), raw.len());
+    assert_eq!(&bytes[2..2 + raw.len()], raw.as_slice());
+    assert_eq!(Addrs::from_wire(&bytes), Ok(addrs));
+    assert_eq!(Addrs::from_wire(&[0]), Ok(Addrs::default()));
+    assert_eq!(Addrs::from_wire(&with_extra_byte(bytes)), Err(trailing()));
+
+    let many = Addrs {
+        addresses: vec![local.clone(); MAX_ADDRS],
+    };
+    assert_eq!(
+        Addrs::from_wire(&many.to_wire()).unwrap().addresses.len(),
+        MAX_ADDRS
+    );
+    let too_many = Addrs {
+        addresses: vec![local; MAX_ADDRS + 1],
+    };
+    assert_eq!(
+        Addrs::from_wire(&too_many.to_wire()),
+        Err(MessageError::TooManyAddrs {
+            count: MAX_ADDRS + 1
+        })
+    );
+    // Panjang alamat 0, dan byte yang bukan multiaddr (kode protokol 0xff tidak dikenal).
+    assert_eq!(
+        Addrs::from_wire(&[1, 0, 0]),
+        Err(MessageError::AddrLength { len: 0 })
+    );
+    assert_eq!(
+        Addrs::from_wire(&[1, 2, 0xff, 0x01]),
+        Err(MessageError::BadAddress)
+    );
+    // Panjang yang diklaim melebihi sisa byte.
+    assert!(matches!(
+        Addrs::from_wire(&[1, 9, 4]),
+        Err(MessageError::Decode(_))
+    ));
 }

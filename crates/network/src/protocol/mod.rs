@@ -8,7 +8,7 @@ use zevrigo_primitives::Hash32;
 /// Panjang awalan hex `network_id` di nama protokol.
 const NETWORK_PREFIX_LEN: usize = 16;
 
-/// Lima protokol request-response P2P v0.1.
+/// Enam protokol request-response P2P v0.1 (`addr` sejak TSK-M74, DEC-43).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ProtocolKind {
     /// `status`: `Status` → `Status`.
@@ -21,16 +21,19 @@ pub enum ProtocolKind {
     Block,
     /// `tx`: `Transaction` → `Ack`.
     Tx,
+    /// `addr`: `GetAddr` → `Addrs` (penemuan rekan, TSK-M74).
+    Addr,
 }
 
 impl ProtocolKind {
-    /// Kelima protokol, urut seperti Spesifikasi P2P Bagian 2.
-    pub const ALL: [Self; 5] = [
+    /// Keenam protokol, urut seperti Spesifikasi P2P Bagian 2.
+    pub const ALL: [Self; 6] = [
         Self::Status,
         Self::Headers,
         Self::Blocks,
         Self::Block,
         Self::Tx,
+        Self::Addr,
     ];
 
     /// Nama pendek protokol.
@@ -42,6 +45,7 @@ impl ProtocolKind {
             Self::Blocks => "blocks",
             Self::Block => "block",
             Self::Tx => "tx",
+            Self::Addr => "addr",
         }
     }
 }

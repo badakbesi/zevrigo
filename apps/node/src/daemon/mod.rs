@@ -10,8 +10,12 @@
 //! Seed resmi bawaan (DEC-43, TSK-M73): [`official_seeds`] per jaringan, didial bersama alamat `--connect` dan diperlakukan
 //! sama (rekan operator, tidak diblokir; DEC-41). Regtest hanya dengan `--seed-resmi`, karena regtest juga dipakai untuk uji
 //! lokal; testnet dan mainnet selalu, kecuali `--tanpa-seed-resmi`.
+//!
+//! Penemuan rekan dan sambungan masuk (DEC-43, TSK-M74, TSK-M75): buku alamat di `<datadir>/<jaringan>/peers.json`
+//! (MOD-06); regtest menerima alamat lokal untuk uji di satu mesin. `--p2p-bind <ip>` memilih alamat dengar P2P TCP (bawaan
+//! `127.0.0.1`), `--p2p-publik <multiaddr>` alamat yang diumumkan ke rekan. RPC tetap hanya di `127.0.0.1`.
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -22,7 +26,7 @@ use zevrigo_consensus::{ChainParams, ParamsError};
 use zevrigo_mempool::DEFAULT_MAX_BYTES;
 use zevrigo_network::{
     KeyError, Multiaddr, Network as P2pNetwork, NetworkConfig, NetworkError, P2P_KEY_FILE,
-    load_or_create,
+    PEERS_FILE, load_or_create,
 };
 use zevrigo_primitives::Network;
 use zevrigo_rpc::transport::default_port;
@@ -38,7 +42,8 @@ pub const USAGE: &str = concat!(
     "\n",
     "Pemakaian:\n",
     "  zevrigo-node --regtest --datadir <folder> [--rpc-port <port>] [--p2p-port <port>]\n",
-    "                   [--p2p-ws-port <port>] [--connect <multiaddr>]... [--seed-resmi]\n",
+    "                   [--p2p-ws-port <port>] [--p2p-bind <ip>] [--p2p-publik <multiaddr>]...\n",
+    "                   [--connect <multiaddr>]... [--seed-resmi]\n",
     "  zevrigo-node --testnet --datadir <folder> [opsi yang sama] [--tanpa-seed-resmi]\n",
     "  zevrigo-node --help | --version\n",
     "\n",
@@ -47,7 +52,12 @@ pub const USAGE: &str = concat!(
     "  --testnet           jaringan testnet (PoW RandomX; mainnet diluncurkan sesudah testnet)\n",
     "  --datadir <folder>  folder data; chain disimpan di <folder>/<jaringan>/chain.redb\n",
     "  --rpc-port <port>   port JSON-RPC di 127.0.0.1 (bawaan regtest 28801, testnet 18801; 0 = port bebas)\n",
-    "  --p2p-port <port>   port P2P di 127.0.0.1 (bawaan regtest 28800, testnet 18800; 0 = port bebas)\n",
+    "  --p2p-port <port>   port P2P TCP (bawaan regtest 28800, testnet 18800; 0 = port bebas)\n",
+    "  --p2p-bind <ip>     alamat IP dengar P2P TCP (bawaan 127.0.0.1). 0.0.0.0 atau :: menerima sambungan\n",
+    "                      masuk dari luar: IP Anda terlihat oleh rekan, dan port perlu diizinkan firewall/router\n",
+    "  --p2p-publik <addr> alamat yang diumumkan ke rekan lewat pertukaran alamat, misalnya\n",
+    "                      /ip4/<IP publik>/tcp/28800 atau /dns4/<nama>/tcp/443/tls/sni/<nama>/ws (tanpa /p2p);\n",
+    "                      boleh berulang. Tanpa opsi ini node tidak mengumumkan dirinya\n",
     "  --p2p-ws-port <port>\n",
     "                      port P2P WebSocket (/ws) di 127.0.0.1, untuk seed di belakang proxy TLS seperti\n",
     "                      Cloudflare Tunnel (bawaan mati; 0 = port bebas)\n",
@@ -59,6 +69,7 @@ pub const USAGE: &str = concat!(
     "\n",
     "Setelah siap, alamat RPC dicetak ke stdout sebagai `rpc: http://<alamat>`, lalu alamat P2P sebagai\n",
     "`p2p: <multiaddr>`, dan alamat WebSocket sebagai `p2p-ws: <multiaddr>` jika --p2p-ws-port dipakai.\n",
+    "Buku alamat rekan disimpan di <folder>/<jaringan>/peers.json; node yang dibuka ulang tersambung lagi dari sana.\n",
     "Log ditulis ke stderr.\n",
     "Node berhenti bersih dengan Ctrl-C (SIGINT) atau SIGTERM.",
 );
@@ -106,8 +117,13 @@ pub struct Config {
     pub datadir: PathBuf,
     /// Port RPC di 127.0.0.1. `0` memilih port bebas.
     pub rpc_port: u16,
-    /// Port P2P di 127.0.0.1. `0` memilih port bebas.
+    /// Port P2P TCP. `0` memilih port bebas.
     pub p2p_port: u16,
+    /// Alamat IP dengar P2P TCP (`--p2p-bind`, TSK-M75). Bawaan `127.0.0.1`; `0.0.0.0` atau `::` menerima sambungan masuk
+    /// dari luar.
+    pub p2p_bind: IpAddr,
+    /// Alamat publik yang diumumkan ke rekan (`--p2p-publik`, TSK-M75), tanpa `/p2p`, urut seperti di argumen.
+    pub public: Vec<Multiaddr>,
     /// Port P2P WebSocket (`/ws`) di 127.0.0.1, untuk seed di belakang proxy TLS (TSK-M45). `None` = tidak mendengar
     /// WebSocket; `0` memilih port bebas.
     pub p2p_ws_port: Option<u16>,
@@ -139,6 +155,12 @@ pub enum ArgError {
     /// Port P2P WebSocket bukan bilangan 0 sampai 65535.
     #[error("port P2P WebSocket tidak sah: {0}")]
     InvalidP2pWsPort(String),
+    /// Nilai `--p2p-bind` bukan alamat IP.
+    #[error("alamat dengar P2P tidak sah (wajib alamat IP, misalnya 0.0.0.0): {0}")]
+    InvalidBind(String),
+    /// Nilai `--p2p-publik` bukan multiaddr dengan `/tcp`, atau memuat `/p2p`.
+    #[error("alamat publik tidak sah (multiaddr dengan /tcp, tanpa /p2p): {0}")]
+    InvalidPublic(String),
     /// Nilai `--connect` bukan multiaddr.
     #[error("alamat rekan tidak sah: {0}")]
     InvalidAddress(String),
@@ -231,6 +253,14 @@ fn choose_network(
     }
 }
 
+/// Membaca alamat `--p2p-publik`: multiaddr dengan `/tcp` (langsung atau di bawah WebSocket), tanpa `/p2p` (`PeerId` node
+/// ditambahkan sendiri).
+fn parse_public(text: &str) -> Option<Multiaddr> {
+    let address = text.parse::<Multiaddr>().ok()?;
+    let shown = address.to_string();
+    (shown.contains("/tcp/") && !shown.contains("/p2p/")).then_some(address)
+}
+
 /// Mencatat pilihan seed resmi dari `flag`. Opsi yang sama dua kali, atau `--seed-resmi` bersama `--tanpa-seed-resmi`,
 /// ditolak.
 fn choose_seeds(slot: &mut Option<bool>, chosen: bool, flag: &'static str) -> Result<(), ArgError> {
@@ -262,6 +292,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Command, Ar
     let mut rpc_port: Option<u16> = None;
     let mut p2p_port: Option<u16> = None;
     let mut p2p_ws_port: Option<u16> = None;
+    let mut p2p_bind: Option<IpAddr> = None;
+    let mut public: Vec<Multiaddr> = Vec::new();
     let mut connect: Vec<Multiaddr> = Vec::new();
     let mut seeds: Option<bool> = None;
     let mut iter = args.into_iter();
@@ -306,6 +338,22 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Command, Ar
                     .map_err(|_| ArgError::InvalidP2pWsPort(value.clone()))?;
                 p2p_ws_port = Some(port);
             }
+            "--p2p-bind" => {
+                if p2p_bind.is_some() {
+                    return Err(ArgError::Duplicate("--p2p-bind"));
+                }
+                let value = value_of(&mut iter, "--p2p-bind")?;
+                let ip = value
+                    .parse::<IpAddr>()
+                    .map_err(|_| ArgError::InvalidBind(value.clone()))?;
+                p2p_bind = Some(ip);
+            }
+            "--p2p-publik" => {
+                let value = value_of(&mut iter, "--p2p-publik")?;
+                let address =
+                    parse_public(&value).ok_or_else(|| ArgError::InvalidPublic(value.clone()))?;
+                public.push(address);
+            }
             "--connect" => {
                 let value = value_of(&mut iter, "--connect")?;
                 let address = value
@@ -326,6 +374,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Command, Ar
         datadir,
         rpc_port: rpc_port.unwrap_or(default_port(network)),
         p2p_port: p2p_port.unwrap_or(default_p2p_port(network)),
+        p2p_bind: p2p_bind.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+        public,
         p2p_ws_port,
         connect,
         official_seeds: seeds.unwrap_or(!matches!(network, Network::Regtest)),
@@ -380,13 +430,25 @@ pub fn p2p_key_path(config: &Config) -> PathBuf {
         .join(P2P_KEY_FILE)
 }
 
-/// Alamat dengar P2P `/ip4/127.0.0.1/tcp/<port>`.
+/// Path buku alamat rekan: `<datadir>/<jaringan>/peers.json` (TSK-M74).
+#[must_use]
+pub fn peers_path(config: &Config) -> PathBuf {
+    config
+        .datadir
+        .join(network_dir(config.network))
+        .join(PEERS_FILE)
+}
+
+/// Alamat dengar P2P TCP `/ip4/<bind>/tcp/<port>` atau `/ip6/<bind>/tcp/<port>` (bawaan `bind` = `127.0.0.1`).
 ///
 /// # Errors
 ///
 /// [`NetworkError::Listen`] jika alamat tidak bisa disusun.
-pub fn p2p_listen_address(port: u16) -> Result<Multiaddr, NetworkError> {
-    let text = format!("/ip4/127.0.0.1/tcp/{port}");
+pub fn p2p_listen_address(bind: IpAddr, port: u16) -> Result<Multiaddr, NetworkError> {
+    let text = match bind {
+        IpAddr::V4(ip) => format!("/ip4/{ip}/tcp/{port}"),
+        IpAddr::V6(ip) => format!("/ip6/{ip}/tcp/{port}"),
+    };
     text.parse::<Multiaddr>()
         .map_err(|error| NetworkError::Listen {
             address: text.clone(),
@@ -467,11 +529,24 @@ async fn serve<S: ChainStore + Send + 'static>(
 
     let keypair = load_or_create(&p2p_key_path(config))?;
     let mut p2p_config = NetworkConfig::new(node.params().network_id());
-    p2p_config.listen = vec![p2p_listen_address(config.p2p_port)?];
+    p2p_config.listen = vec![p2p_listen_address(config.p2p_bind, config.p2p_port)?];
     if let Some(port) = config.p2p_ws_port {
         p2p_config.listen.push(p2p_ws_listen_address(port)?);
     }
     p2p_config.connect = dial_addresses(config)?;
+    p2p_config.public = config.public.clone();
+    p2p_config.peers_file = Some(peers_path(config));
+    // Regtest juga dipakai untuk uji beberapa node di satu mesin, jadi alamat lokal diterima (DEC-43).
+    p2p_config.allow_local = matches!(config.network, Network::Regtest);
+    if !config.p2p_bind.is_loopback() {
+        tracing::warn!(
+            bind = %config.p2p_bind,
+            "P2P menerima sambungan masuk dari luar: IP Anda terlihat oleh rekan; izinkan port P2P di firewall"
+        );
+    }
+    for address in &config.public {
+        tracing::info!(%address, "alamat publik diumumkan ke rekan");
+    }
     if config.official_seeds {
         let seeds = official_seeds(config.network).len();
         if seeds == 0 {

@@ -1,10 +1,11 @@
-//! Pesan P2P v0.1 (Spesifikasi P2P Bagian 3): `Status`, `GetHeaders`, `Headers`, `GetBlocks`, `Blocks`, `Ack`, serta
-//! `Block` dan `Transaction` dengan encoding kanonis Spesifikasi Format v0.1 (DEC-12).
+//! Pesan P2P v0.1 (Spesifikasi P2P Bagian 3): `Status`, `GetHeaders`, `Headers`, `GetBlocks`, `Blocks`, `Ack`, `GetAddr`, dan
+//! `Addrs` (TSK-M74, DEC-43), serta `Block` dan `Transaction` dengan encoding kanonis Spesifikasi Format v0.1 (DEC-12).
 //!
 //! Setiap pesan punya tepat satu encoding sah. Batas jumlah elemen diperiksa sesudah jumlahnya dibaca dan sebelum
 //! elemennya dibaca, dan setiap byte wajib terbaca habis. Pengirim wajib mematuhi batas; [`Wire::to_wire`] tidak
 //! memeriksanya, penerima menolak lewat [`Wire::from_wire`].
 
+use libp2p::Multiaddr;
 use thiserror::Error;
 use zevrigo_primitives::encoding::{
     write_bytes, write_u8, write_u64_le, write_varint_u64, write_vec,
@@ -31,6 +32,12 @@ pub const MAX_HEADERS: usize = 2_000;
 
 /// Jumlah ID blok paling banyak di `GetBlocks` dan entri di `Blocks` (`16`).
 pub const MAX_BLOCK_IDS: usize = 16;
+
+/// Jumlah alamat paling banyak di `Addrs` (`250`, TSK-M74).
+pub const MAX_ADDRS: usize = 250;
+
+/// Panjang encoding biner satu alamat di `Addrs` paling besar (`255` byte).
+pub const MAX_ADDR_LEN: usize = 255;
 
 /// Ukuran satu ID (`bytes32`).
 const ID_SIZE: usize = 32;
@@ -77,6 +84,21 @@ pub enum MessageError {
         /// Nilai yang ditemukan.
         status: u8,
     },
+    /// `Addrs` berisi lebih dari 250 alamat.
+    #[error("Addrs berisi {count} alamat (paling banyak 250)")]
+    TooManyAddrs {
+        /// Jumlah alamat yang diklaim.
+        count: usize,
+    },
+    /// Panjang encoding satu alamat di `Addrs` di luar 1 sampai 255 byte.
+    #[error("alamat di Addrs sepanjang {len} byte (wajib 1 sampai 255)")]
+    AddrLength {
+        /// Panjang yang diklaim.
+        len: usize,
+    },
+    /// Alamat di `Addrs` bukan encoding biner multiaddr yang sah dan kanonis.
+    #[error("alamat di Addrs bukan multiaddr yang sah")]
+    BadAddress,
     /// Panjang isi bingkai melebihi 2 MiB.
     #[error("panjang pesan {len} byte melebihi batas 2097152 byte")]
     FrameTooLarge {
@@ -358,6 +380,69 @@ impl Wire for Ack {
         let ack = Self::from_u8(r.read_u8()?)?;
         r.finish()?;
         Ok(ack)
+    }
+}
+
+/// Pesan `GetAddr` (protokol `addr`, permintaan, TSK-M74): isi kosong.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GetAddr;
+
+impl Wire for GetAddr {
+    fn to_wire(&self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    fn from_wire(bytes: &[u8]) -> Result<Self, MessageError> {
+        Reader::new(bytes).finish()?;
+        Ok(Self)
+    }
+}
+
+/// Pesan `Addrs` (protokol `addr`, jawaban, TSK-M74): 0 sampai 250 alamat rekan, masing-masing
+/// `varint(panjang) ‖ multiaddr biner` (1 sampai 255 byte, encoding biner multiaddr yang kanonis).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Addrs {
+    /// Alamat rekan, masing-masing diakhiri `/p2p/<PeerId>`.
+    pub addresses: Vec<Multiaddr>,
+}
+
+impl Wire for Addrs {
+    fn to_wire(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        write_varint_u64(
+            &mut out,
+            u64::try_from(self.addresses.len()).unwrap_or(u64::MAX),
+        );
+        for address in &self.addresses {
+            let raw = address.to_vec();
+            write_varint_u64(&mut out, u64::try_from(raw.len()).unwrap_or(u64::MAX));
+            write_bytes(&mut out, &raw);
+        }
+        out
+    }
+
+    fn from_wire(bytes: &[u8]) -> Result<Self, MessageError> {
+        let mut r = Reader::new(bytes);
+        let count = r.read_vec_len(2)?;
+        if count > MAX_ADDRS {
+            return Err(MessageError::TooManyAddrs { count });
+        }
+        let mut addresses = Vec::with_capacity(count);
+        for _ in 0..count {
+            let len = r.read_vec_len(1)?;
+            if len == 0 || len > MAX_ADDR_LEN {
+                return Err(MessageError::AddrLength { len });
+            }
+            let raw = r.read_slice(len)?;
+            let address =
+                Multiaddr::try_from(raw.to_vec()).map_err(|_| MessageError::BadAddress)?;
+            if address.to_vec() != raw {
+                return Err(MessageError::BadAddress);
+            }
+            addresses.push(address);
+        }
+        r.finish()?;
+        Ok(Self { addresses })
     }
 }
 

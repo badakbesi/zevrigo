@@ -15,6 +15,9 @@ zevrigo-primitives.workspace = true
 libp2p = { workspace = true, features = ["tcp", "noise", "yamux", "request-response", "ed25519", "macros", "websocket"] }
 libp2p-swarm = { workspace = true, features = ["tokio"] }
 libp2p-tcp = { workspace = true, features = ["tokio"] }
+# DEC-10 bagian 2 (crate di luar konsensus), DEC-43 (TSK-M74): buku alamat `peers.json`. Sudah ada di Cargo.lock lewat
+# MOD-08 dan MOD-11; tanpa paket baru.
+serde_json.workspace = true
 thiserror.workspace = true
 # `net` dan `rt`: `tokio::net::lookup_host` (resolver sistem untuk alamat `/dns*`, TSK-M45); tanpa paket baru.
 tokio = { workspace = true, features = ["macros", "net", "rt", "time"] }

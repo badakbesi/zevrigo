@@ -22,6 +22,7 @@ fn names_use_first_16_hex_of_network_id() {
             "/zvrg/8b9eb3187250bbdf/blocks/1",
             "/zvrg/8b9eb3187250bbdf/block/1",
             "/zvrg/8b9eb3187250bbdf/tx/1",
+            "/zvrg/8b9eb3187250bbdf/addr/1",
         ]
     );
 }

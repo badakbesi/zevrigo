@@ -655,7 +655,8 @@ impl<S: ChainStore + Send + 'static> P2pService<S> {
                 }
                 self.fetch_bodies();
             }
-            ProtocolKind::Status | ProtocolKind::Block | ProtocolKind::Tx => {}
+            // `addr` ditangani MOD-06 sendiri dan tidak pernah dilaporkan sebagai permintaan gagal.
+            ProtocolKind::Status | ProtocolKind::Block | ProtocolKind::Tx | ProtocolKind::Addr => {}
         }
     }
 

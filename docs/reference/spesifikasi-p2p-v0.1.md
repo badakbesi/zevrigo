@@ -1,13 +1,13 @@
-# Spesifikasi P2P Zevrigo Coin (ZVRG) v0.1: transport libp2p, 5 protokol, sinkronisasi header lalu blok, siaran blok dan transaksi
+# Spesifikasi P2P Zevrigo Coin (ZVRG) v0.1: transport libp2p, 6 protokol, sinkronisasi header lalu blok, siaran blok dan transaksi, penemuan rekan
 
-> Diperbarui: 20 November 2026 (DEC-41) · Pemilik: pencipta · Ditulis: Quick · Task: TSK-S05, TSK-M45, TSK-M67 · Status: 🟢 v0.1
+> Diperbarui: 23 November 2026 (DEC-43) · Pemilik: pencipta · Ditulis: Quick · Task: TSK-S05, TSK-M45, TSK-M67, TSK-M73, TSK-M74, TSK-M75 · Status: 🟢 v0.1
 > Lokasi di repo: `docs/reference/spesifikasi-p2p-v0.1.md`
 
 | Status | Ringkasan |
 |---|---|
-| 🟢 Dikunci | rust-libp2p 0.57 (DEC-24): TCP atau WebSocket (DEC-33), Noise, Yamux, request-response. 5 protokol dengan encoding kanonis sendiri, sinkronisasi header lalu blok, siaran blok dan transaksi, pemilihan chain berdasarkan chainwork, sanksi rekan, keepalive `status` 60 detik |
-| ⏳ Ditunda | Penemuan rekan otomatis (Kademlia, mDNS, daftar rekan bertukar), relay dan NAT, pembatasan bandwidth, perlindungan eclipse, blok kompak, pemangkasan (TSK-M23) |
-| ➡️ Langkah berikutnya | Semua task v0.1 selesai: TSK-M27, TSK-M14 (MOD-06), TSK-M28 (daemon), TSK-F04 (lima node, reorg dalam). Batas memori node (TSK-M34) selesai. Sebelum testnet: penemuan rekan, perlindungan eclipse |
+| 🟢 Dikunci | rust-libp2p 0.57 (DEC-24): TCP atau WebSocket (DEC-33), Noise, Yamux, request-response. 6 protokol dengan encoding kanonis sendiri, sinkronisasi header lalu blok, siaran blok dan transaksi, pemilihan chain berdasarkan chainwork, sanksi rekan, keepalive `status` 60 detik, seed resmi bawaan, penemuan rekan lewat `addr` dengan buku alamat dan perlindungan eclipse dasar, sambungan masuk opsional (DEC-43) |
+| ⏳ Ditunda | Kademlia, mDNS, relay dan NAT (UPnP, hole punching), pembatasan bandwidth, blok kompak, pemangkasan (TSK-M23) |
+| ➡️ Langkah berikutnya | Semua task v0.1 selesai: TSK-M27, TSK-M14 (MOD-06), TSK-M28 (daemon), TSK-F04 (lima node, reorg dalam), TSK-M34, TSK-M73 sampai TSK-M75 (DEC-43). Sebelum mainnet: tinjau ulang perlindungan eclipse dan sybil (Bagian 9) |
 
 P2P **bukan konsensus**. Aturan di dokumen ini bisa diubah lewat versi protokol baru tanpa memecah chain. Semua blok dan
 transaksi yang diterima dari rekan tetap diperiksa penuh dengan MOD-04 (V1 sampai V10, T1 sampai T6).
@@ -23,14 +23,15 @@ transaksi yang diterima dari rekan tetap diperiksa penuh dengan MOD-04 (V1 sampa
 | Alamat DNS | `/dns4/<nama>/tcp/<port>`, `/dns6/...`, dan `/dns/...` (juga di dalam `/tls/sni/<nama>/ws`) di-resolve resolver sistem operasi (`tokio::net::lookup_host`) setiap kali didial, di bawah lapisan WebSocket, sehingga SNI TLS dan kepala `Host` WebSocket berisi nama. Tanpa `libp2p-dns` |
 | Identitas rekan | Kunci Ed25519 libp2p, terpisah dari kunci wallet. 32 byte rahasia dari sumber acak sistem operasi saat node pertama kali berjalan, disimpan di `<datadir>/<jaringan>/p2p_key` (32 byte mentah, izin `0600`). `PeerId` diturunkan dari kunci ini |
 | Port bawaan | regtest 28_800 · testnet 18_800 · mainnet 8_800 (RPC tetap `x_801`). WebSocket tanpa bawaan (mati); paket publik memakai `x_803` (regtest 28_803) |
-| Alamat dengar bawaan | regtest `/ip4/127.0.0.1/tcp/28800`; dengan `--p2p-ws-port <port>` juga `/ip4/127.0.0.1/tcp/<port>/ws`. Testnet dan mainnet ditetapkan bersama TSK-F06 |
+| Alamat dengar bawaan | regtest `/ip4/127.0.0.1/tcp/28800`; dengan `--p2p-ws-port <port>` juga `/ip4/127.0.0.1/tcp/<port>/ws`. `--p2p-bind <ip>` (TSK-M75) mengganti `127.0.0.1` untuk TCP, misalnya `0.0.0.0` agar menerima sambungan masuk; WebSocket tetap `127.0.0.1` (di belakang proxy). Testnet dan mainnet ditetapkan bersama TSK-F06 |
 | Seed di belakang proxy TLS (DEC-33) | Seed mendengar `/ws` tanpa TLS di 127.0.0.1; proxy (cloudflared, Cloudflare Tunnel) memutus TLS dan meneruskan WebSocket ke port itu. Peserta bergabung dengan `--connect /dns4/<nama>/tcp/443/tls/sni/<nama>/ws/p2p/<PeerId seed>`; TLS diperiksa terhadap sertifikat akar `webpki-roots` |
-| Penemuan rekan v0.1 | Alamat yang ditulis operator: opsi `--connect <multiaddr>` boleh berulang (IP atau nama `/dns*`, TCP atau WebSocket), ditambah seed resmi bawaan jaringan itu (DEC-43, TSK-M73; regtest hanya dengan `--seed-resmi`, Bagian 8). Node menyambung ulang ke alamat itu setiap 10 detik jika putus. Pertukaran alamat rekan dan sambungan masuk dari luar menyusul (TSK-M74, TSK-M75) |
-| Batas koneksi | Paling banyak 8 koneksi keluar dan 32 koneksi masuk; satu koneksi per `PeerId` |
+| Penemuan rekan v0.1 | Jangkar: alamat `--connect <multiaddr>` (boleh berulang; IP atau nama `/dns*`, TCP atau WebSocket) ditambah seed resmi bawaan jaringan itu (DEC-43, TSK-M73; regtest hanya dengan `--seed-resmi`, Bagian 8), disambung ulang setiap 10 detik jika putus. Rekan lain ditemukan lewat protokol `addr` dan buku alamat `peers.json` (TSK-M74, Bagian 12) |
+| Batas koneksi | Paling banyak 8 koneksi keluar dan 32 koneksi masuk; satu koneksi per `PeerId`. Koneksi keluar dari buku alamat paling banyak 8 dikurangi jumlah jangkar |
 | Koneksi menganggur | Ditutup setelah 300 detik tanpa aliran terbuka. Keepalive `status` setiap 60 detik (Bagian 4) membuat koneksi ke rekan aktif tidak pernah menganggur |
 
 Fitur lain libp2p (gossipsub, kad, mdns, identify, ping, quic, dns, relay, autonat, dcutr) tidak dipakai di v0.1, agar
 dependensi tetap seminimal mungkin. Ping libp2p tidak diperlukan karena keepalive memakai protokol `status` yang sudah ada.
+Penemuan rekan memakai protokol sendiri `addr` (Bagian 12), bukan Kademlia (DEC-43).
 
 ---
 
@@ -47,6 +48,7 @@ sama sekali, karena negosiasi protokol libp2p gagal.
 | `blocks` | `GetBlocks` | `Blocks` | Mengambil badan blok |
 | `block` | `Block` (encoding kanonis) | `Ack` | Siaran blok baru |
 | `tx` | `Transaction` (encoding kanonis) | `Ack` | Siaran transaksi baru |
+| `addr` | `GetAddr` | `Addrs` | Penemuan rekan (TSK-M74, Bagian 12) |
 
 ---
 
@@ -67,6 +69,8 @@ sama sekali, karena negosiasi protokol libp2p gagal.
 | `GetBlocks` | `ids: vec<bytes32>` | 1 sampai 16 ID |
 | `Blocks` | `entries: vec<Entry>`, `Entry` = `00` (tidak punya) atau `01 ‖ Block` | tepat sebanyak `ids`, urutan sama |
 | `Ack` | `status: u8` | lihat Bagian 6 |
+| `GetAddr` | kosong (0 byte) | sisa byte = pesan rusak |
+| `Addrs` | `addresses: vec<Addr>`, `Addr` = `varint(panjang) ‖ multiaddr biner` | 0 sampai 250 alamat; panjang 1 sampai 255 byte; multiaddr wajib sah dan kanonis (encoding ulang sama persis) |
 
 `Status.version` selain 1 atau `network_id` yang berbeda dari milik node: koneksi ditutup tanpa sanksi.
 
@@ -88,6 +92,8 @@ Koreksi 1 November 2026 (TSK-M14): ukuran `Status` adalah 105 byte; versi pertam
    besar daripada chainwork ujung sendiri, node mengirim isi mempoolnya lewat `tx`: paling banyak 64 transaksi, urut
    kedatangan (induk sebelum anak). Rekan yang masih tertinggal menerimanya sesudah mengejar (`status` berikutnya, paling
    lambat keepalive). Dengan begitu transaksi yang masuk saat rekan terputus tetap sampai, tanpa menunggu siaran baru.
+6. **Alamat (DEC-43, TSK-M74):** node juga mengirim `GetAddr` ke rekan begitu terhubung, lalu setiap 10 menit (Bagian 12).
+   Rekan versi lama yang tidak mengenal protokol `addr` tetap tersambung; permintaan itu diabaikan tanpa sanksi.
 
 ---
 
@@ -184,7 +190,7 @@ terpotong, chain demo terbelah sekitar 5 jam). Rekan itu dipilih operator sendir
 
 ## 8. Opsi daemon (MOD-11, TSK-M28)
 
-`zevrigo-node --regtest --datadir <folder> [--rpc-port <port>] [--p2p-port <port>] [--p2p-ws-port <port>] [--connect <multiaddr>]… [--seed-resmi | --tanpa-seed-resmi]`
+`zevrigo-node --regtest --datadir <folder> [--rpc-port <port>] [--p2p-port <port>] [--p2p-ws-port <port>] [--p2p-bind <ip>] [--p2p-publik <multiaddr>]… [--connect <multiaddr>]… [--seed-resmi | --tanpa-seed-resmi]`
 
 - Seed resmi bawaan (DEC-43, TSK-M73): daftar per jaringan di MOD-11 (`daemon::official_seeds`), lengkap dengan `PeerId`.
   Regtest: seed jaringan demo `/dns4/demo-seed-p2p.zevrigo.online/tcp/443/tls/sni/demo-seed-p2p.zevrigo.online/ws/p2p/<PeerId>`,
@@ -198,16 +204,28 @@ terpotong, chain demo terbelah sekitar 5 jam). Rekan itu dipilih operator sendir
   mencetak satu baris `p2p-ws: /ip4/127.0.0.1/tcp/<port>/ws/p2p/<PeerId>`. Tanpa opsi ini node tidak mendengar WebSocket.
 - `--connect` menerima alamat IP maupun nama, TCP maupun WebSocket, misalnya
   `/dns4/demo-seed-p2p.zevrigo.online/tcp/443/tls/sni/demo-seed-p2p.zevrigo.online/ws/p2p/<PeerId>`.
+- `--p2p-bind <ip>` (TSK-M75): alamat IP dengar P2P TCP, bawaan `127.0.0.1`. `0.0.0.0` atau `::` menerima sambungan masuk
+  dari luar; node mencatat peringatan bahwa IP-nya terlihat oleh rekan dan port P2P perlu diizinkan firewall atau router.
+  RPC tetap hanya di `127.0.0.1`.
+- `--p2p-publik <multiaddr>` (TSK-M75, boleh berulang): alamat yang diumumkan ke rekan lewat `Addrs`, dengan `/tcp`, tanpa
+  `/p2p` (`PeerId` node ditambahkan sendiri), misalnya `/ip4/<IP publik>/tcp/28800` atau, untuk seed di belakang Cloudflare
+  Tunnel, `/dns4/<nama>/tcp/443/tls/sni/<nama>/ws`. Tanpa opsi ini node tidak mengumumkan dirinya walaupun mendengar di
+  `0.0.0.0`: tidak ada tebakan alamat luar dan tanpa UPnP.
+- Buku alamat di `<folder>/<jaringan>/peers.json` (Bagian 12). Regtest menerima alamat loopback dan privat (uji beberapa node
+  di satu mesin); testnet dan mainnet tidak.
 - Log rekan (terhubung, putus, sanksi) ke stderr lewat `tracing`.
 
 ---
 
 ## 9. Batas v0.1 dan risiko yang diketahui
 
-- Seed resmi bawaan ada sejak TSK-M73 (DEC-43). Penemuan rekan (pertukaran alamat lewat protokol sendiri, buku alamat,
-  perlindungan eclipse) dan sambungan masuk opsional dirancang di DEC-43 (TSK-M74, TSK-M75); sampai itu node hanya tersambung
-  ke seed dan alamat `--connect`, sehingga jaringan bergantung pada seed.
-- Perlindungan eclipse dan sybil minimal (batas koneksi, sanksi). Wajib ditinjau ulang sebelum mainnet.
+- Seed resmi bawaan (TSK-M73), penemuan rekan (TSK-M74), dan sambungan masuk opsional (TSK-M75) ada sejak DEC-43. Selama
+  hampir semua node di belakang NAT tanpa port terbuka dan tanpa `--p2p-publik`, jaringan tetap bergantung pada seed:
+  penemuan rekan baru berarti saat sebagian node membuka port atau ada seed kedua (keputusan pencipta).
+- Perlindungan eclipse dan sybil dasar (Bagian 12: kelompok jaringan, batas per sumber, jangkar, pilihan acak; batas
+  koneksi; sanksi). Rekan yang masuk lewat Cloudflare Tunnel tampak dari 127.0.0.1, jadi kelompok sumbernya per koneksi,
+  bukan per IP asli. Tanpa ping alamat, tanpa tabel bucket ala Bitcoin, dan alamat diri rekan diteruskan tanpa diuji. Wajib
+  ditinjau ulang sebelum mainnet.
 - Blok dikirim utuh ke setiap rekan; cukup untuk blok 100_000 byte setiap 120 detik, tetapi boros jika rekan banyak.
 - Ring (kode C dan assembly) masuk lewat Noise (DEC-24). Reproducible build (TSK-F10) wajib mengunci versi compiler C.
 - Badan blok cabang disimpan di penyimpanan node (MOD-05, tabel `side_blocks`, TSK-M35 bagian A); di memori hanya
@@ -245,6 +263,9 @@ terpotong, chain demo terbelah sekitar 5 jam). Rekan itu dipilih operator sendir
 | Sinkronisasi header lalu blok, siaran, opsi daemon | MOD-11 | TSK-M28 |
 | Transport WebSocket, alamat `/dns*`, keepalive `status` (MOD-06); opsi `--p2p-ws-port` (MOD-11); seed lewat Cloudflare Tunnel | MOD-06, MOD-11 | TSK-M45 |
 | Aliran terpotong tanpa sanksi dan rekan `--connect` tanpa blokir (MOD-06); isi mempool ke rekan yang baru tersambung (MOD-11) | MOD-06, MOD-11, MOD-17 | TSK-M67 |
+| Seed resmi bawaan, `--seed-resmi`, `--tanpa-seed-resmi` | MOD-11 | TSK-M73 |
+| Protokol `addr`, buku alamat `peers.json`, koneksi keluar dari buku alamat, perlindungan eclipse dasar | MOD-06, MOD-11, MOD-17 | TSK-M74 |
+| `--p2p-bind`, `--p2p-publik`, alamat publik di `Addrs` | MOD-06, MOD-11 | TSK-M75 |
 | 4 node atau lebih tetap sinkron, jaringan terpisah lalu tersambung (reorg dalam), node yang tertinggal mengejar | MOD-17 | TSK-F04 |
 
 ---
@@ -258,4 +279,44 @@ terpotong, chain demo terbelah sekitar 5 jam). Rekan itu dipilih operator sendir
 | DEC-33 | Seed publik sementara lewat Cloudflare Tunnel memakai WebSocket libp2p; keepalive `status` 60 detik; nama `/dns*` di-resolve resolver sistem; regtest dulu | 🟢 diputuskan pencipta 11 November 2026 |
 | DEC-10 bagian 12 | Fitur `websocket` libp2p 0.57.1 di MOD-06: +6 paket (libp2p-websocket, futures-rustls, rustls dengan ring, rustls-pki-types, rustls-webpki, webpki-roots), reference/paket-mod06-websocket-v0.1.txt | 🟢 11 November 2026 (konsekuensi DEC-33) |
 | DEC-41 | Aliran yang berakhir sebelum pesan lengkap bukan pelanggaran; rekan `--connect` tidak pernah diblokir (hanya diputus dan disambung ulang); isi mempool (paling banyak 64 transaksi) dikirim ke rekan yang baru tersambung dengan ujung sama atau lebih berat | 🟢 20 November 2026 (insiden jaringan demo, perbaikan diminta pencipta) |
-| DEC-43 | Node tersambung otomatis: seed resmi bawaan per jaringan (regtest hanya dengan `--seed-resmi`), penemuan rekan lewat protokol `addr` sendiri dengan buku alamat dan perlindungan eclipse (tanpa Kademlia, tanpa dependensi baru), sambungan masuk opsional | 🟡 23 November 2026; seed bawaan (TSK-M73), penemuan rekan dan sambungan masuk menyusul |
+| DEC-43 | Node tersambung otomatis: seed resmi bawaan per jaringan (regtest hanya dengan `--seed-resmi`), penemuan rekan lewat protokol `addr` sendiri dengan buku alamat dan perlindungan eclipse (tanpa Kademlia, tanpa dependensi baru), sambungan masuk opsional | 🟢 23 November 2026; seed bawaan (TSK-M73), penemuan rekan (TSK-M74), sambungan masuk (TSK-M75) |
+
+---
+
+## 12. Penemuan rekan dan buku alamat (DEC-43, TSK-M74, TSK-M75)
+
+**Pertukaran alamat.** Saat terhubung dan setiap 10 menit, node mengirim `GetAddr` ke setiap rekan. Jawaban `Addrs` berisi,
+tanpa duplikat dan tanpa alamat milik penanya, paling banyak 250 alamat:
+1. alamat publik node itu sendiri (`--p2p-publik`, dengan `/p2p/<PeerId>`-nya);
+2. alamat yang diumumkan rekan lain yang sedang terhubung untuk dirinya sendiri (alamat di `Addrs` rekan itu yang `PeerId`-nya
+   sama dengan rekan itu, paling banyak 4 per rekan), selama rekan itu terhubung. Alamat ini diteruskan tanpa diuji: koneksi
+   satu per `PeerId` membuat node yang sudah tersambung dengan sebuah rekan tidak bisa mendialnya lagi untuk menguji, dan Noise
+   menolak penyambung bila `PeerId` di alamat bukan milik tujuan;
+3. alamat **teruji** buku alamat (pernah berhasil didial node itu), mulai dari posisi acak.
+
+Rekan yang bertanya lagi sebelum separuh selang (5 menit) menerima `Addrs` kosong. `Addrs` rusak (Bagian 3) disanksi seperti
+pesan rusak lain (Bagian 7). Alamat yang diterima wajib diakhiri `/p2p/<PeerId>`, memakai TCP (langsung atau di bawah
+WebSocket), dan bukan milik node itu sendiri; alamat loopback, privat, link-local, dan tidak ditentukan ditolak kecuali di
+regtest.
+
+**Buku alamat** (`<datadir>/<jaringan>/peers.json`, MOD-06 `addrbook`):
+
+| Hal | Nilai |
+|---|---|
+| Tabel | **baru** (didengar dari rekan) dan **teruji** (pernah berhasil didial, termasuk seed dan `--connect`); paling banyak 2_000 alamat, 500 teruji |
+| Kelompok jaringan | IPv4 `/16`, IPv6 `/32`, nama DNS per dua label terakhir (`zevrigo.online`); IP lokal (regtest) satu kelompok per alamat |
+| Batas per sumber | Sumber = kelompok jaringan rekan yang memberi tahu. Paling banyak 8 alamat per kelompok dan 64 alamat seluruhnya dari satu sumber |
+| Buku penuh | Alamat baru dengan gagal terbanyak dibuang; alamat teruji tidak dibuang |
+| Gagal | Alamat dibuang sesudah 5 kali berturut-turut gagal didial; berhasil = hitungan kembali 0. Alamat yang baru dicoba menunggu 60 detik |
+| Berkas | JSON `{"versi": 1, "alamat": [{"alamat": "<multiaddr>", "teruji": true, "gagal": 0}, …]}`, ditulis lewat `peers.json.tmp` lalu rename, setiap selang sambung ulang bila berubah dan saat node berhenti. File yang tidak ada atau rusak = buku kosong (alamat dikumpulkan lagi dari seed) |
+
+**Koneksi keluar dari buku alamat.** Setiap selang sambung ulang (10 detik), jika koneksi keluar non-jangkar kurang dari 8
+dikurangi jumlah jangkar (seed dan `--connect`), node mendial paling banyak 2 alamat baru dari buku alamat. Alamat dipilih
+acak (separuh peluang dari tabel teruji bila ada), bukan rekan yang sudah terhubung atau sedang didial, dan bukan kelompok
+jaringan yang sudah dipakai koneksi keluar. Rekan dan IP yang diblokir dilewati. Bilangan acak dari `RandomState` pustaka
+standar (kunci acak sistem operasi), tanpa dependensi baru.
+
+**Perlindungan eclipse dasar:** jangkar seed dan `--connect` selalu dipertahankan dan tidak diblokir (DEC-41); koneksi keluar
+tambahan ke kelompok berbeda dan dipilih acak; satu sumber tidak bisa memenuhi buku alamat; alamat yang berkali-kali gagal
+dibuang; buku alamat bertahan saat node dibuka ulang, jadi node tidak bergantung pada seed setiap kali mulai. Batas yang
+diketahui: Bagian 9.

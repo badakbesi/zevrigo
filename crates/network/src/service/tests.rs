@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use libp2p::identity::Keypair;
@@ -6,6 +7,7 @@ use libp2p::{Multiaddr, PeerId};
 use zevrigo_primitives::{Block, BlockHeight, Hash32};
 
 use super::{NetEvent, Network, NetworkConfig, Offense, ip_of, peer_of, strip_p2p};
+use crate::addrbook::AddressBook;
 use crate::message::{Ack, Blocks, GetBlocks, GetHeaders, Headers, Status};
 use crate::test_support::{id, sample_block, sample_tx};
 use crate::transport::is_websocket;
@@ -399,4 +401,97 @@ async fn keepalive_sends_status_periodically() {
         assert_eq!(wait_status(&mut a, b_id).await, status(NET_A, 0));
     }
     assert_eq!(a.connected_peers(), vec![b_id]);
+}
+
+/// Port TCP bebas di 127.0.0.1 (dipilih sistem operasi, lalu dilepas).
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+/// Node dengan penemuan rekan (TSK-M74): alamat lokal diterima, selang pendek, mendengar di port tetap dan
+/// mengumumkannya sebagai alamat publik (TSK-M75). Mengembalikan alamat lengkapnya dengan `/p2p`.
+fn discovering(connect: Vec<Multiaddr>, peers_file: Option<PathBuf>) -> (Network, Multiaddr) {
+    let listen: Multiaddr = format!("/ip4/127.0.0.1/tcp/{}", free_port())
+        .parse()
+        .unwrap();
+    let mut config = NetworkConfig::new(NET_A);
+    config.listen = vec![listen.clone()];
+    config.public = vec![listen.clone()];
+    config.connect = connect;
+    config.redial_interval = Duration::from_millis(200);
+    config.addr_interval = Duration::from_millis(300);
+    config.allow_local = true;
+    config.peers_file = peers_file;
+    let net = Network::new(Keypair::generate_ed25519(), config, status(NET_A, 0)).unwrap();
+    let full = listen.with(Protocol::P2p(net.local_peer_id()));
+    (net, full)
+}
+
+#[tokio::test]
+async fn peers_learn_each_other_through_hub_and_keep_address_book() {
+    let (hub, hub_addr) = discovering(Vec::new(), None);
+    let hub_id = hub.local_peer_id();
+    tokio::spawn(serve(hub, false));
+    let (a, _) = discovering(vec![hub_addr.clone()], None);
+    let a_id = a.local_peer_id();
+    tokio::spawn(serve(a, false));
+
+    // B hanya mengenal hub, mendapat alamat A dari hub (alamat diri A), lalu tersambung langsung dengan A.
+    let file = std::env::temp_dir().join(format!("zvrg-mod06-peers-{}.json", std::process::id()));
+    let _ = std::fs::remove_file(&file);
+    let (mut b, _) = discovering(vec![hub_addr], Some(file.clone()));
+    next_matching(
+        &mut b,
+        |event| matches!(event, NetEvent::PeerConnected { peer, .. } if *peer == a_id),
+    )
+    .await;
+    let peers = b.connected_peers();
+    assert!(
+        peers.contains(&hub_id) && peers.contains(&a_id),
+        "{peers:?}"
+    );
+    // Beri waktu jawaban `Addrs` dari A sampai, lalu hentikan B: buku alamatnya tersimpan di `peers.json`.
+    let drive = async {
+        loop {
+            if matches!(b.next_event().await, NetEvent::Listening { .. }) {
+                break;
+            }
+        }
+    };
+    let _ = tokio::time::timeout(Duration::from_secs(2), drive).await;
+    assert!(b.address_book().peers().contains(&a_id));
+    drop(b);
+    let book = AddressBook::load(&file, true);
+    let known = book.peers();
+    assert!(
+        known.contains(&hub_id) && known.contains(&a_id),
+        "{known:?}"
+    );
+    assert!(book.tried_peers().contains(&hub_id));
+    let _ = std::fs::remove_file(&file);
+}
+
+#[tokio::test]
+async fn local_addresses_are_ignored_by_default() {
+    // Tanpa `allow_local` (testnet, mainnet) alamat 127.0.0.1 tidak masuk buku alamat dan tidak diteruskan.
+    let mut a = node(NET_A, Vec::new(), 1);
+    let a_id = a.local_peer_id();
+    let a_addr = dial_address(&mut a).await;
+    tokio::spawn(serve(a, false));
+    let mut b = node(NET_A, vec![a_addr], 0);
+    wait_status(&mut b, a_id).await;
+    let drive = async {
+        loop {
+            if matches!(b.next_event().await, NetEvent::Listening { .. }) {
+                break;
+            }
+        }
+    };
+    let _ = tokio::time::timeout(Duration::from_secs(1), drive).await;
+    assert!(b.address_book().is_empty());
+    assert_eq!(b.connected_peers(), vec![a_id]);
 }

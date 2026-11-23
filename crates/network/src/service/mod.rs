@@ -10,7 +10,12 @@
 //!   sekitar 100 detik;
 //! - sanksi untuk pesan rusak dan jawaban `Blocks` yang jumlah entrinya salah (putus dan blokir 24 jam), kecuali rekan
 //!   operator dari `--connect`, yang hanya diputus lalu disambung ulang (DEC-41);
-//! - putus tanpa blokir setelah 3 permintaan berturut-turut tidak dijawab dalam 30 detik.
+//! - putus tanpa blokir setelah 3 permintaan berturut-turut tidak dijawab dalam 30 detik;
+//! - penemuan rekan (DEC-43, TSK-M74): `GetAddr` ke setiap rekan saat terhubung dan setiap 10 menit, jawaban `Addrs` berisi
+//!   alamat publik node ini (`--p2p-publik`, TSK-M75), alamat yang diumumkan rekan lain yang sedang terhubung untuk dirinya
+//!   sendiri, dan alamat teruji buku alamat ([`AddressBook`]); koneksi keluar tambahan dari buku alamat ke kelompok jaringan
+//!   yang berbeda; buku alamat disimpan di `peers.json`. Rekan versi lama yang tidak mengenal protokol `addr` tetap
+//!   tersambung.
 //!
 //! Aliran yang berakhir sebelum pesan lengkap (koneksi putus di tengah pesan, atau rekan menutup aliran tanpa menjawab)
 //! dilaporkan sebagai permintaan yang gagal, bukan pesan rusak (DEC-41).
@@ -19,8 +24,11 @@
 //! yang wajib dijawab pemanggil (MOD-11). Validasi blok, transaksi, dan header, serta sanksi untuk isi yang tidak sah
 //! ([`Network::punish`]), ada di pemanggil.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::hash_map::RandomState;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::hash::{BuildHasher, Hasher};
 use std::net::IpAddr;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use libp2p::connection_limits::{self, ConnectionLimits};
@@ -40,9 +48,13 @@ use thiserror::Error;
 use tokio::time::{Interval, MissedTickBehavior};
 use zevrigo_primitives::{Block, Hash32, Transaction};
 
+use crate::addrbook::{AddressBook, group_of};
 use crate::ban::BanList;
 use crate::codec::{Received, WireCodec};
-use crate::message::{Ack, Blocks, GetBlocks, GetHeaders, Headers, MessageError, Status, Wire};
+use crate::message::{
+    Ack, Addrs, Blocks, GetAddr, GetBlocks, GetHeaders, Headers, MAX_ADDRS, MessageError, Status,
+    Wire,
+};
 use crate::protocol::{ProtocolKind, stream_protocol};
 use crate::transport::DnsTcp;
 
@@ -71,6 +83,21 @@ pub const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(60);
 /// Jumlah permintaan berturut-turut yang tidak dijawab sebelum koneksi diputus (tanpa blokir).
 pub const MAX_TIMEOUTS: u8 = 3;
 
+/// Selang `GetAddr` ke setiap rekan (10 menit, TSK-M74). Rekan juga ditanya sekali saat terhubung.
+pub const ADDR_INTERVAL: Duration = Duration::from_secs(600);
+
+/// Dial baru dari buku alamat paling banyak per selang sambung ulang.
+pub const BOOK_DIALS_PER_TICK: usize = 2;
+
+/// Alamat diri yang diumumkan satu rekan paling banyak (diteruskan ke rekan lain selama rekan itu terhubung).
+pub const MAX_ADVERTISED: usize = 4;
+
+/// Alamat buku yang sudah dicoba didial menunggu `RETRY_FACTOR` kali selang sambung ulang (60 detik) sebelum dicoba lagi.
+const RETRY_FACTOR: u32 = 6;
+
+/// Dial dari buku alamat yang tidak berkabar selama ini dilupakan (dial gagal atau berhasil selalu berkabar lebih cepat).
+const DIAL_STALE: Duration = Duration::from_secs(60);
+
 /// ID permintaan keluar. Unik per protokol, jadi selalu dibaca bersama jenis event atau [`ProtocolKind`].
 pub type RequestId = OutboundRequestId;
 
@@ -86,6 +113,7 @@ struct Behaviour {
     bodies: Rr<GetBlocks, Blocks>,
     block: Rr<Block, Ack>,
     tx: Rr<Transaction, Ack>,
+    addr: Rr<GetAddr, Addrs>,
 }
 
 fn rr<Req, Resp>(network_id: &Hash32, kind: ProtocolKind) -> Result<Rr<Req, Resp>, NetworkError>
@@ -115,6 +143,7 @@ impl Behaviour {
             bodies: rr(network_id, ProtocolKind::Blocks)?,
             block: rr(network_id, ProtocolKind::Block)?,
             tx: rr(network_id, ProtocolKind::Tx)?,
+            addr: rr(network_id, ProtocolKind::Addr)?,
         })
     }
 }
@@ -152,10 +181,21 @@ pub struct NetworkConfig {
     pub redial_interval: Duration,
     /// Selang keepalive `status`; bawaan [`KEEPALIVE_INTERVAL`] (test memakai selang lebih pendek).
     pub keepalive_interval: Duration,
+    /// Alamat publik node ini (tanpa `/p2p`; `PeerId` ditambahkan) yang diumumkan ke rekan lewat `Addrs` (TSK-M75,
+    /// `--p2p-publik`). Kosong = node tidak mengumumkan dirinya.
+    pub public: Vec<Multiaddr>,
+    /// Path buku alamat (`<datadir>/<jaringan>/peers.json`, TSK-M74); `None` = hanya di memori.
+    pub peers_file: Option<PathBuf>,
+    /// Terima alamat loopback dan privat dari rekan (regtest, uji lokal). Bawaan `false`: alamat itu tidak masuk buku
+    /// alamat dan tidak diteruskan.
+    pub allow_local: bool,
+    /// Selang `GetAddr` ke setiap rekan; bawaan [`ADDR_INTERVAL`] (test memakai selang lebih pendek).
+    pub addr_interval: Duration,
 }
 
 impl NetworkConfig {
-    /// Konfigurasi tanpa alamat dengar dan tanpa rekan, selang sambung ulang 10 detik, keepalive 60 detik.
+    /// Konfigurasi tanpa alamat dengar dan tanpa rekan, selang sambung ulang 10 detik, keepalive 60 detik, tanpa alamat
+    /// publik, buku alamat hanya di memori tanpa alamat lokal, `GetAddr` setiap 10 menit.
     #[must_use]
     pub const fn new(network_id: Hash32) -> Self {
         Self {
@@ -164,6 +204,10 @@ impl NetworkConfig {
             connect: Vec::new(),
             redial_interval: REDIAL_INTERVAL,
             keepalive_interval: KEEPALIVE_INTERVAL,
+            public: Vec::new(),
+            peers_file: None,
+            allow_local: false,
+            addr_interval: ADDR_INTERVAL,
         }
     }
 }
@@ -320,6 +364,12 @@ struct PeerInfo {
     ip: Option<IpAddr>,
     /// Permintaan berturut-turut yang tidak dijawab.
     timeouts: u8,
+    /// Alamat rekan (tanpa `/p2p`) saat koneksi terbentuk; kelompok jaringannya menjadi sumber alamat dari rekan ini.
+    remote: Multiaddr,
+    /// Alamat publik yang diumumkan rekan untuk dirinya sendiri (paling banyak [`MAX_ADVERTISED`]).
+    advertised: Vec<Multiaddr>,
+    /// Waktu terakhir `GetAddr` rekan dijawab dengan alamat.
+    addr_served: Option<Instant>,
 }
 
 /// Permintaan, jawaban, atau kegagalan dari satu behaviour request-response.
@@ -425,10 +475,22 @@ pub struct Network {
     events: VecDeque<NetEvent>,
     redial: Interval,
     keepalive: Interval,
+    book: AddressBook,
+    public: Vec<Multiaddr>,
+    peers_file: Option<PathBuf>,
+    book_dirty: bool,
+    /// Dial dari buku alamat yang sedang berjalan: alamat dan waktu mulai.
+    dialing: BTreeMap<PeerId, (Multiaddr, Instant)>,
+    retry_after: Duration,
+    addr_interval: Duration,
+    addr_tick: Interval,
+    random: RandomState,
+    random_counter: u64,
 }
 
 impl Network {
-    /// Membangun swarm, mulai mendengar di `config.listen`, dan mendial `config.connect`.
+    /// Membangun swarm, memuat buku alamat dari `config.peers_file` (file yang tidak ada atau rusak = buku kosong), mulai
+    /// mendengar di `config.listen`, dan mendial `config.connect`.
     ///
     /// Wajib dipanggil di dalam runtime tokio.
     ///
@@ -441,6 +503,17 @@ impl Network {
         local_status: Status,
     ) -> Result<Self, NetworkError> {
         let behaviour = Behaviour::new(&config.network_id)?;
+        let local = keypair.public().to_peer_id();
+        let mut book = config.peers_file.as_deref().map_or_else(
+            || AddressBook::new(config.allow_local),
+            |path| AddressBook::load(path, config.allow_local),
+        );
+        book.remove_peer(&local);
+        let public = config
+            .public
+            .iter()
+            .map(|address| strip_p2p(address).with(Protocol::P2p(local)))
+            .collect();
         let noise = noise::Config::new(&keypair)
             .map_err(|error| NetworkError::Transport(error.to_string()))?;
         // Seperti `SwarmBuilder::with_tcp` libp2p 0.57.1 (TCP, lalu Noise XX, lalu Yamux, batas waktu 10 detik),
@@ -456,7 +529,7 @@ impl Network {
         let mut swarm = Swarm::new(
             transport,
             behaviour,
-            keypair.public().to_peer_id(),
+            local,
             swarm::Config::with_tokio_executor().with_idle_connection_timeout(IDLE_TIMEOUT),
         );
         for address in &config.listen {
@@ -473,6 +546,7 @@ impl Network {
         }
         let redial = ticker(config.redial_interval);
         let keepalive = ticker(config.keepalive_interval);
+        let addr_tick = ticker(config.addr_interval);
         Ok(Self {
             swarm,
             network_id: config.network_id,
@@ -484,7 +558,23 @@ impl Network {
             events: VecDeque::new(),
             redial,
             keepalive,
+            book,
+            public,
+            peers_file: config.peers_file,
+            book_dirty: false,
+            dialing: BTreeMap::new(),
+            retry_after: config.redial_interval.saturating_mul(RETRY_FACTOR),
+            addr_interval: config.addr_interval,
+            addr_tick,
+            random: RandomState::new(),
+            random_counter: 0,
         })
+    }
+
+    /// Buku alamat node ini (TSK-M74).
+    #[must_use]
+    pub const fn address_book(&self) -> &AddressBook {
+        &self.book
     }
 
     /// `PeerId` node ini.
@@ -599,6 +689,7 @@ impl Network {
                 event = self.swarm.select_next_some() => self.on_swarm_event(event),
                 _ = self.redial.tick() => self.on_tick(),
                 _ = self.keepalive.tick() => self.on_keepalive(),
+                _ = self.addr_tick.tick() => self.on_addr_tick(),
             }
         }
     }
@@ -624,6 +715,10 @@ impl Network {
                         .push_back(NetEvent::PeerDisconnected { peer: peer_id });
                 }
             }
+            SwarmEvent::OutgoingConnectionError {
+                peer_id: Some(peer),
+                ..
+            } => self.on_dial_failed(peer),
             SwarmEvent::Behaviour(event) => self.on_behaviour(event),
             _ => {}
         }
@@ -635,16 +730,31 @@ impl Network {
         let ip = ip_of(&address);
         let ip_banned = ip.is_some_and(|ip| self.bans.is_ip_banned(&ip, now));
         if ip_banned || self.bans.is_peer_banned(&peer, now) {
+            self.dialing.remove(&peer);
             self.swarm.close_connection(connection);
             return;
         }
-        let dialed = endpoint.is_dialer().then(|| strip_p2p(&address));
+        let remote = strip_p2p(&address);
+        let dialed = endpoint.is_dialer().then(|| remote.clone());
+        if dialed.is_some() {
+            // Alamat yang berhasil didial (termasuk seed dan `--connect`) masuk tabel teruji buku alamat.
+            self.dialing.remove(&peer);
+            if self
+                .book
+                .mark_success(&remote.clone().with(Protocol::P2p(peer)))
+            {
+                self.book_dirty = true;
+            }
+        }
         self.peers.insert(
             peer,
             PeerInfo {
                 dialed,
                 ip,
                 timeouts: 0,
+                remote,
+                advertised: Vec::new(),
+                addr_served: None,
             },
         );
         self.events
@@ -654,6 +764,10 @@ impl Network {
             .behaviour_mut()
             .status
             .send_request(&peer, Ok(status));
+        self.swarm
+            .behaviour_mut()
+            .addr
+            .send_request(&peer, Ok(GetAddr));
     }
 
     fn on_behaviour(&mut self, event: BehaviourEvent) {
@@ -664,6 +778,7 @@ impl Network {
             BehaviourEvent::Bodies(event) => self.on_bodies(event),
             BehaviourEvent::Block(event) => self.on_block(event),
             BehaviourEvent::Tx(event) => self.on_tx(event),
+            BehaviourEvent::Addr(event) => self.on_addr(event),
         }
     }
 
@@ -869,6 +984,194 @@ impl Network {
         }
     }
 
+    fn on_addr(&mut self, event: request_response::Event<Received<GetAddr>, Received<Addrs>>) {
+        match split(event) {
+            Some(Rx::Request {
+                peer,
+                request,
+                channel,
+            }) => match request {
+                Ok(GetAddr) => {
+                    let addresses = self.addresses_for(peer);
+                    let _ = self
+                        .swarm
+                        .behaviour_mut()
+                        .addr
+                        .send_response(channel, Ok(Addrs { addresses }));
+                }
+                Err(error) => self.apply_punishment(peer, Offense::BadMessage(error)),
+            },
+            Some(Rx::Response { peer, response, .. }) => {
+                self.reset_timeouts(&peer);
+                match response {
+                    Ok(addrs) => self.on_addrs(peer, &addrs),
+                    Err(error) => self.apply_punishment(peer, Offense::BadMessage(error)),
+                }
+            }
+            // Rekan versi lama tidak mengenal protokol `addr` (tetap tersambung); kegagalan lain tidak memengaruhi
+            // sinkronisasi dan tidak dihitung.
+            Some(Rx::Failed { .. }) | None => {}
+        }
+    }
+
+    /// Alamat untuk jawaban `Addrs` ke `requester`: alamat publik node ini, alamat diri rekan lain yang sedang terhubung,
+    /// lalu alamat teruji buku alamat; tanpa alamat milik `requester`, tanpa duplikat, paling banyak [`MAX_ADDRS`].
+    /// Rekan yang bertanya lagi sebelum separuh selang `GetAddr` menerima jawaban kosong.
+    fn addresses_for(&mut self, requester: PeerId) -> Vec<Multiaddr> {
+        let now = Instant::now();
+        let half = self.addr_interval / 2;
+        let Some(info) = self.peers.get_mut(&requester) else {
+            return Vec::new();
+        };
+        if info
+            .addr_served
+            .is_some_and(|served| now.saturating_duration_since(served) < half)
+        {
+            return Vec::new();
+        }
+        info.addr_served = Some(now);
+        let mut out: Vec<Multiaddr> = self.public.clone();
+        for (peer, info) in &self.peers {
+            if *peer != requester {
+                out.extend(info.advertised.iter().cloned());
+            }
+        }
+        let random = self.next_random();
+        out.extend(self.book.shareable(MAX_ADDRS, random));
+        let mut seen = BTreeSet::new();
+        out.retain(|address| {
+            peer_of(address) != Some(requester) && seen.insert(address.to_string())
+        });
+        out.truncate(MAX_ADDRS);
+        out
+    }
+
+    /// Memproses `Addrs` dari `peer`: alamat yang sah masuk tabel baru dengan sumber kelompok jaringan `peer`; alamat milik
+    /// `peer` sendiri juga dicatat sebagai alamat dirinya, untuk diteruskan selama `peer` terhubung.
+    fn on_addrs(&mut self, peer: PeerId, addrs: &Addrs) {
+        let local = self.local_peer_id();
+        let Some(source) = self.peers.get(&peer).map(|info| group_of(&info.remote)) else {
+            return;
+        };
+        let mut own: Vec<Multiaddr> = Vec::new();
+        for address in &addrs.addresses {
+            let Some(owner) = self.book.acceptable(address) else {
+                continue;
+            };
+            if owner == local {
+                continue;
+            }
+            if owner == peer && own.len() < MAX_ADVERTISED && !own.contains(address) {
+                own.push(address.clone());
+            }
+            if self.book.add_heard(address, &source) {
+                self.book_dirty = true;
+            }
+        }
+        if !own.is_empty()
+            && let Some(info) = self.peers.get_mut(&peer)
+        {
+            info.advertised = own;
+        }
+    }
+
+    /// `GetAddr` ke setiap rekan yang terhubung.
+    fn on_addr_tick(&mut self) {
+        let peers: Vec<PeerId> = self.peers.keys().copied().collect();
+        for peer in peers {
+            self.swarm
+                .behaviour_mut()
+                .addr
+                .send_request(&peer, Ok(GetAddr));
+        }
+    }
+
+    /// Dial dari buku alamat ke `peer` gagal: hitungan gagal alamat itu bertambah, kecuali rekan sudah tersambung lewat
+    /// koneksi lain (misalnya rekan itu lebih dulu menyambung ke node ini).
+    fn on_dial_failed(&mut self, peer: PeerId) {
+        if let Some((address, _)) = self.dialing.remove(&peer)
+            && !self.peers.contains_key(&peer)
+        {
+            self.book.mark_failure(&address);
+            self.book_dirty = true;
+        }
+    }
+
+    /// Menambah koneksi keluar dari buku alamat sampai [`MAX_OUTBOUND`] dikurangi jumlah alamat `--connect` (jangkar yang
+    /// selalu dipertahankan), paling banyak [`BOOK_DIALS_PER_TICK`] per selang, ke rekan dan kelompok jaringan yang belum
+    /// dipakai koneksi keluar (perlindungan eclipse).
+    fn dial_from_book(&mut self, now: Instant) {
+        let target = usize::try_from(MAX_OUTBOUND)
+            .unwrap_or(usize::MAX)
+            .saturating_sub(self.connect.len());
+        let mut busy_peers: BTreeSet<PeerId> = self.peers.keys().copied().collect();
+        busy_peers.extend(self.dialing.keys().copied());
+        let mut busy_groups: BTreeSet<String> = self
+            .dialing
+            .values()
+            .map(|(address, _)| group_of(address))
+            .collect();
+        let mut outbound = self.dialing.len();
+        for (peer, info) in &self.peers {
+            if let Some(dialed) = &info.dialed {
+                busy_groups.insert(group_of(dialed));
+                if !self.is_operator(peer) {
+                    outbound = outbound.saturating_add(1);
+                }
+            }
+        }
+        for _ in 0..BOOK_DIALS_PER_TICK {
+            if outbound >= target {
+                break;
+            }
+            let random = self.next_random();
+            let Some(address) =
+                self.book
+                    .pick(now, self.retry_after, &busy_peers, &busy_groups, random)
+            else {
+                break;
+            };
+            self.book.mark_attempt(&address, now);
+            let Some(peer) = peer_of(&address) else {
+                continue;
+            };
+            busy_peers.insert(peer);
+            busy_groups.insert(group_of(&address));
+            let banned = self.bans.is_peer_banned(&peer, now)
+                || ip_of(&address).is_some_and(|ip| self.bans.is_ip_banned(&ip, now));
+            if banned {
+                continue;
+            }
+            if self.swarm.dial(address.clone()).is_ok() {
+                self.dialing.insert(peer, (address, now));
+                outbound = outbound.saturating_add(1);
+            } else {
+                self.book.mark_failure(&address);
+                self.book_dirty = true;
+            }
+        }
+    }
+
+    /// Menyimpan buku alamat ke `peers.json` bila ada. Gagal menyimpan tidak menghentikan node; dicoba lagi pada selang
+    /// berikutnya.
+    fn save_book(&mut self) {
+        let saved = self
+            .peers_file
+            .as_deref()
+            .is_none_or(|path| self.book.save(path).is_ok());
+        if saved {
+            self.book_dirty = false;
+        }
+    }
+
+    /// Bilangan acak 64 bit dari `RandomState` (kunci acak sistem operasi per proses), tanpa dependensi baru.
+    fn next_random(&mut self) -> u64 {
+        self.random_counter = self.random_counter.wrapping_add(1);
+        let mut hasher = self.random.build_hasher();
+        hasher.write_u64(self.random_counter);
+        hasher.finish()
+    }
+
     fn on_failure(
         &mut self,
         peer: PeerId,
@@ -963,6 +1266,12 @@ impl Network {
         for address in targets {
             let _ = self.swarm.dial(address);
         }
+        self.dialing
+            .retain(|_, (_, since)| now.saturating_duration_since(*since) < DIAL_STALE);
+        self.dial_from_book(now);
+        if self.book_dirty {
+            self.save_book();
+        }
     }
 
     /// Mengirim `status` ke setiap rekan yang terhubung. Jawabannya memperbarui ujung chain rekan
@@ -992,6 +1301,15 @@ impl Network {
             .peers
             .values()
             .any(|info| info.dialed.as_ref() == Some(&plain))
+    }
+}
+
+impl Drop for Network {
+    /// Buku alamat disimpan saat layanan berhenti, sehingga node yang dibuka ulang tersambung lagi tanpa seed.
+    fn drop(&mut self) {
+        if self.book_dirty {
+            self.save_book();
+        }
     }
 }
 

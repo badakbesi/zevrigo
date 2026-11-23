@@ -18,6 +18,9 @@ Menjalankan daemon node penuh Zevrigo Coin (baik mode arsip maupun *pruned*) yan
 - Cabang chain, pemilihan chain berdasarkan chainwork, dan reorg (TSK-M27); sinkronisasi header lalu blok, siaran, dan opsi `--p2p-port`/`--connect` (TSK-M28), sesuai [spesifikasi-p2p-v0.1.md](../reference/spesifikasi-p2p-v0.1.md).
 - Seed resmi bawaan (DEC-43, TSK-M73): `official_seeds` per jaringan didial bersama `--connect` (tanpa duplikat) sebagai
   rekan operator; regtest hanya dengan `--seed-resmi`, testnet dan mainnet selalu kecuali `--tanpa-seed-resmi`.
+- Penemuan rekan dan sambungan masuk (DEC-43, TSK-M74, TSK-M75): buku alamat `<folder>/<jaringan>/peers.json` (MOD-06,
+  regtest menerima alamat lokal), `--p2p-bind <ip>` (alamat dengar P2P TCP, bawaan `127.0.0.1`, dengan peringatan bila bukan
+  loopback), `--p2p-publik <multiaddr>` (alamat yang diumumkan ke rekan, tanpa `/p2p`). RPC tetap hanya di `127.0.0.1`.
 - Isi mempool (paling banyak 64 transaksi, urut kedatangan) dikirim sekali per koneksi ke rekan yang `status`-nya menunjukkan
   ujung sama atau lebih berat, sehingga transaksi yang masuk saat rekan terputus tetap sampai (DEC-41, TSK-M67).
 - Batas blok cabang, indeks header, dan catatan blok tidak sah (`NodeLimits`, TSK-M34).
@@ -38,3 +41,5 @@ Menjalankan daemon node penuh Zevrigo Coin (baik mode arsip maupun *pruned*) yan
 - [TSK-M45](https://github.com/badakbesi/zevrigo-demo/blob/main/docs/tasks/TSK-M45-seed-websocket.md) — 🟢 selesai (opsi `--p2p-ws-port`, baris `p2p-ws:`, seed lewat Cloudflare Tunnel)
 - [TSK-M67](../tasks/TSK-M67-p2p-putus-sambung.md) — 🟡 mempool ke rekan yang baru tersambung, log sanksi rekan `--connect` (DEC-41)
 - [TSK-M73](../tasks/TSK-M73-seed-bawaan.md) — 🟢 seed resmi bawaan (`--seed-resmi`, `--tanpa-seed-resmi`, DEC-43)
+- [TSK-M74](../tasks/TSK-M74-penemuan-rekan.md) — 🟢 penemuan rekan (`peers.json`, MOD-06; uji integrasi MOD-17)
+- [TSK-M75](../tasks/TSK-M75-sambungan-masuk.md) — 🟢 sambungan masuk opsional (`--p2p-bind`, `--p2p-publik`)
