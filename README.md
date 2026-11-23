@@ -95,11 +95,10 @@ Aplikasi punya repo sendiri sejak DEC-39, di folder induk `zevrigo_lab` di sebel
 | [zevrigo-blog](https://github.com/badakbesi/zevrigo-blog) | Blog resmi, situs statis |
 
 Situs utama: https://zevrigo.online. Jaringan demo regtest publik: explorer https://demo-explorer.zevrigo.online. Node lain bergabung ke seed
-dengan:
+resmi dengan `--seed-resmi` (seed bawaan node, DEC-43), atau dengan alamat seed lewat `--connect`:
 
 ```bash
-zevrigo-node --regtest --datadir ~/.zevrigo \
-  --connect /dns4/demo-seed-p2p.zevrigo.online/tcp/443/tls/sni/demo-seed-p2p.zevrigo.online/ws/p2p/<PeerId seed>
+zevrigo-node --regtest --datadir ~/.zevrigo --seed-resmi
 ```
 
 ## Sumber resmi

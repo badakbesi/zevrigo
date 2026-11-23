@@ -36,7 +36,8 @@ disebut dokumen sebelum tanggal itu merujuk riwayat tersebut.
 | Testnet | Belum diluncurkan | Ditetapkan saat peluncuran (TSK-F06); nilai di kode sekarang sementara |
 | Regtest (jaringan demo publik) | Dimulai ulang 19 November 2026 (chain sebelumnya dihapus); koin demo tidak bernilai | `8b9eb3187250bbdfe1577ebcb668c30003213a9ee6a4424427b08e38da364dab` |
 
-Genesis regtest sama di setiap komputer, jadi jaringan demo resmi dikenali dari seed resminya:
+Genesis regtest sama di setiap komputer, jadi jaringan demo resmi dikenali dari seed resminya. Alamat ini juga tertanam di
+node (DEC-43): `zevrigo-node --regtest --datadir <folder> --seed-resmi` menyambung ke sana tanpa perlu disalin.
 
 ```
 /dns4/demo-seed-p2p.zevrigo.online/tcp/443/tls/sni/demo-seed-p2p.zevrigo.online/ws/p2p/12D3KooWABPBsu8gZWtL7bbeEPjg6gwRPDbp3GZidpTeUC95rRDo

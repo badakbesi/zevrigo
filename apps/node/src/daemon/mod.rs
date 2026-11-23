@@ -6,6 +6,10 @@
 //! RPC siap, daemon mencetak baris `rpc: http://<alamat>` ke stdout, lalu `p2p: /ip4/<alamat>/tcp/<port>/p2p/<PeerId>`
 //! setelah P2P mendengar (Spesifikasi P2P v0.1 Bagian 8), dan `p2p-ws: .../ws/p2p/<PeerId>` jika `--p2p-ws-port`
 //! dipakai (TSK-M45); log ditulis ke stderr.
+//!
+//! Seed resmi bawaan (DEC-43, TSK-M73): [`official_seeds`] per jaringan, didial bersama alamat `--connect` dan diperlakukan
+//! sama (rekan operator, tidak diblokir; DEC-41). Regtest hanya dengan `--seed-resmi`, karena regtest juga dipakai untuk uji
+//! lokal; testnet dan mainnet selalu, kecuali `--tanpa-seed-resmi`.
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
@@ -34,8 +38,8 @@ pub const USAGE: &str = concat!(
     "\n",
     "Pemakaian:\n",
     "  zevrigo-node --regtest --datadir <folder> [--rpc-port <port>] [--p2p-port <port>]\n",
-    "                   [--p2p-ws-port <port>] [--connect <multiaddr>]...\n",
-    "  zevrigo-node --testnet --datadir <folder> [opsi yang sama]\n",
+    "                   [--p2p-ws-port <port>] [--connect <multiaddr>]... [--seed-resmi]\n",
+    "  zevrigo-node --testnet --datadir <folder> [opsi yang sama] [--tanpa-seed-resmi]\n",
     "  zevrigo-node --help | --version\n",
     "\n",
     "Opsi:\n",
@@ -49,6 +53,9 @@ pub const USAGE: &str = concat!(
     "                      Cloudflare Tunnel (bawaan mati; 0 = port bebas)\n",
     "  --connect <addr>    rekan P2P, misalnya /ip4/127.0.0.1/tcp/28800/p2p/<PeerId> atau\n",
     "                      /dns4/<nama>/tcp/443/tls/sni/<nama>/ws/p2p/<PeerId>; boleh berulang\n",
+    "  --seed-resmi        sambung juga ke seed resmi bawaan jaringan ini (DEC-43). Bawaan: regtest tidak\n",
+    "                      (regtest juga dipakai untuk uji lokal), testnet dan mainnet ya\n",
+    "  --tanpa-seed-resmi  jangan sambung ke seed resmi bawaan, misalnya untuk uji lokal testnet\n",
     "\n",
     "Setelah siap, alamat RPC dicetak ke stdout sebagai `rpc: http://<alamat>`, lalu alamat P2P sebagai\n",
     "`p2p: <multiaddr>`, dan alamat WebSocket sebagai `p2p-ws: <multiaddr>` jika --p2p-ws-port dipakai.\n",
@@ -58,6 +65,26 @@ pub const USAGE: &str = concat!(
 
 /// Nama file chain di folder jaringan.
 pub const CHAIN_FILE: &str = "chain.redb";
+
+/// Seed resmi jaringan demo regtest (DEC-43, TSK-M73; `SUMBER_RESMI.md`): seed VPS lewat Cloudflare Tunnel, WebSocket dengan
+/// TLS. `PeerId` di akhir alamat diperiksa Noise, jadi node tidak tersambung ke seed tiruan di alamat yang sama.
+pub const REGTEST_SEEDS: &[&str] = &[concat!(
+    "/dns4/demo-seed-p2p.zevrigo.online/tcp/443/tls/sni/demo-seed-p2p.zevrigo.online/ws",
+    "/p2p/12D3KooWABPBsu8gZWtL7bbeEPjg6gwRPDbp3GZidpTeUC95rRDo"
+)];
+
+/// Seed resmi testnet: kosong sampai lokasi seed testnet diputuskan pencipta (TSK-F06).
+pub const TESTNET_SEEDS: &[&str] = &[];
+
+/// Seed resmi bawaan jaringan `network` (DEC-43). Mainnet belum diluncurkan, jadi kosong.
+#[must_use]
+pub const fn official_seeds(network: Network) -> &'static [&'static str] {
+    match network {
+        Network::Regtest => REGTEST_SEEDS,
+        Network::Testnet => TESTNET_SEEDS,
+        Network::Mainnet => &[],
+    }
+}
 
 /// Perintah hasil membaca argumen.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,6 +113,9 @@ pub struct Config {
     pub p2p_ws_port: Option<u16>,
     /// Alamat rekan dari `--connect`, urut seperti di argumen.
     pub connect: Vec<Multiaddr>,
+    /// Sambung juga ke [`official_seeds`] (DEC-43): bawaan regtest `false` (`--seed-resmi`), testnet dan mainnet `true`
+    /// (`--tanpa-seed-resmi`).
+    pub official_seeds: bool,
 }
 
 /// Argumen tidak sah. Biner keluar dengan kode 2.
@@ -121,6 +151,9 @@ pub enum ArgError {
     /// Lebih dari satu jaringan dipilih.
     #[error("hanya satu jaringan boleh dipilih: --regtest atau --testnet")]
     NetworkConflict,
+    /// `--seed-resmi` digabung dengan `--tanpa-seed-resmi`.
+    #[error("--seed-resmi dan --tanpa-seed-resmi tidak boleh digabung")]
+    SeedConflict,
     /// Folder data tidak diisi.
     #[error("folder data wajib diisi: --datadir <folder>")]
     MissingDatadir,
@@ -156,6 +189,9 @@ pub enum DaemonError {
     /// Layanan P2P tidak bisa dijalankan (misalnya port terpakai).
     #[error("P2P gagal: {0}")]
     P2p(#[from] NetworkError),
+    /// Alamat di [`official_seeds`] bukan multiaddr (kesalahan pembangunan, dicegah uji).
+    #[error("alamat seed resmi tidak sah: {0}")]
+    Seed(String),
 }
 
 /// Port P2P bawaan per jaringan (Spesifikasi P2P v0.1 Bagian 1).
@@ -195,6 +231,19 @@ fn choose_network(
     }
 }
 
+/// Mencatat pilihan seed resmi dari `flag`. Opsi yang sama dua kali, atau `--seed-resmi` bersama `--tanpa-seed-resmi`,
+/// ditolak.
+fn choose_seeds(slot: &mut Option<bool>, chosen: bool, flag: &'static str) -> Result<(), ArgError> {
+    match *slot {
+        Some(previous) if previous == chosen => Err(ArgError::Duplicate(flag)),
+        Some(_) => Err(ArgError::SeedConflict),
+        None => {
+            *slot = Some(chosen);
+            Ok(())
+        }
+    }
+}
+
 /// Membaca argumen (tanpa nama program). Tanpa argumen sama dengan `--help`.
 ///
 /// # Errors
@@ -214,6 +263,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Command, Ar
     let mut p2p_port: Option<u16> = None;
     let mut p2p_ws_port: Option<u16> = None;
     let mut connect: Vec<Multiaddr> = Vec::new();
+    let mut seeds: Option<bool> = None;
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -263,6 +313,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Command, Ar
                     .map_err(|_| ArgError::InvalidAddress(value.clone()))?;
                 connect.push(address);
             }
+            "--seed-resmi" => choose_seeds(&mut seeds, true, "--seed-resmi")?,
+            "--tanpa-seed-resmi" => choose_seeds(&mut seeds, false, "--tanpa-seed-resmi")?,
             "--help" | "-h" | "--version" => return Err(ArgError::Exclusive),
             _ => return Err(ArgError::Unknown(arg)),
         }
@@ -276,7 +328,29 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Command, Ar
         p2p_port: p2p_port.unwrap_or(default_p2p_port(network)),
         p2p_ws_port,
         connect,
+        official_seeds: seeds.unwrap_or(!matches!(network, Network::Regtest)),
     }))
+}
+
+/// Alamat rekan yang didial node: alamat `--connect` (urut argumen), lalu [`official_seeds`] jaringan itu bila
+/// `official_seeds` aktif, tanpa duplikat.
+///
+/// # Errors
+///
+/// [`DaemonError::Seed`] jika alamat seed resmi bukan multiaddr.
+pub fn dial_addresses(config: &Config) -> Result<Vec<Multiaddr>, DaemonError> {
+    let mut addresses = config.connect.clone();
+    if config.official_seeds {
+        for seed in official_seeds(config.network) {
+            let address = seed
+                .parse::<Multiaddr>()
+                .map_err(|_| DaemonError::Seed((*seed).to_owned()))?;
+            if !addresses.contains(&address) {
+                addresses.push(address);
+            }
+        }
+    }
+    Ok(addresses)
 }
 
 /// Nama folder jaringan di dalam folder data.
@@ -397,7 +471,17 @@ async fn serve<S: ChainStore + Send + 'static>(
     if let Some(port) = config.p2p_ws_port {
         p2p_config.listen.push(p2p_ws_listen_address(port)?);
     }
-    p2p_config.connect.clone_from(&config.connect);
+    p2p_config.connect = dial_addresses(config)?;
+    if config.official_seeds {
+        let seeds = official_seeds(config.network).len();
+        if seeds == 0 {
+            tracing::warn!(
+                "jaringan ini belum punya seed resmi bawaan; tambahkan rekan dengan --connect"
+            );
+        } else {
+            tracing::info!(seeds, "seed resmi bawaan dipakai");
+        }
+    }
     let network = P2pNetwork::new(keypair, p2p_config, local_status(&node)?)?;
     let p2p = P2pService::new(Arc::clone(&node), network).run(receiver);
     tokio::select! {

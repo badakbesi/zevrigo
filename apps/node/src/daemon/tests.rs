@@ -4,8 +4,8 @@ use zevrigo_network::Multiaddr;
 use zevrigo_primitives::Network;
 
 use super::{
-    ArgError, Command, Config, USAGE, chain_path, default_p2p_port, p2p_key_path,
-    p2p_listen_address, p2p_ws_listen_address, parse_args,
+    ArgError, Command, Config, REGTEST_SEEDS, USAGE, chain_path, default_p2p_port, dial_addresses,
+    official_seeds, p2p_key_path, p2p_listen_address, p2p_ws_listen_address, parse_args,
 };
 
 fn args(list: &[&str]) -> Vec<String> {
@@ -20,6 +20,7 @@ fn run_config(datadir: &str, rpc_port: u16) -> Command {
         p2p_port: 28_800,
         p2p_ws_port: None,
         connect: Vec::new(),
+        official_seeds: false,
     })
 }
 
@@ -200,6 +201,7 @@ fn parses_testnet() {
             p2p_port: 18_800,
             p2p_ws_port: None,
             connect: Vec::new(),
+            official_seeds: true,
         }
     );
     assert_eq!(
@@ -283,4 +285,99 @@ fn parses_websocket_options() {
     for (list, expected) in cases {
         assert_eq!(parse_args(args(list)), Err(expected), "{list:?}");
     }
+}
+
+#[test]
+fn official_seeds_only_when_asked_on_regtest() {
+    let seed = REGTEST_SEEDS.first().copied().unwrap_or_default();
+    assert_eq!(
+        seed,
+        "/dns4/demo-seed-p2p.zevrigo.online/tcp/443/tls/sni/demo-seed-p2p.zevrigo.online/ws/p2p/12D3KooWABPBsu8gZWtL7bbeEPjg6gwRPDbp3GZidpTeUC95rRDo"
+    );
+    assert_eq!(official_seeds(Network::Regtest), REGTEST_SEEDS);
+    assert!(official_seeds(Network::Testnet).is_empty());
+    assert!(official_seeds(Network::Mainnet).is_empty());
+    for network in [Network::Regtest, Network::Testnet, Network::Mainnet] {
+        for text in official_seeds(network) {
+            assert!(text.parse::<Multiaddr>().is_ok(), "{text}");
+            assert!(text.contains("/p2p/12D3KooW"), "{text}");
+        }
+    }
+    let seed_address = seed.parse::<Multiaddr>().unwrap();
+    let parse = |list: &[&str]| match parse_args(args(list)) {
+        Ok(Command::Run(config)) => config,
+        other => unreachable!("{other:?}"),
+    };
+
+    let plain = parse(&["--regtest", "--datadir", "d"]);
+    assert!(!plain.official_seeds);
+    assert!(dial_addresses(&plain).unwrap().is_empty());
+
+    let asked = parse(&["--regtest", "--datadir", "d", "--seed-resmi"]);
+    assert!(asked.official_seeds);
+    assert_eq!(dial_addresses(&asked).unwrap(), vec![seed_address.clone()]);
+
+    let other = "/ip4/127.0.0.1/tcp/38800";
+    let both = parse(&[
+        "--regtest",
+        "--datadir",
+        "d",
+        "--connect",
+        other,
+        "--seed-resmi",
+        "--connect",
+        seed,
+    ]);
+    assert_eq!(
+        dial_addresses(&both).unwrap(),
+        vec![other.parse::<Multiaddr>().unwrap(), seed_address]
+    );
+
+    let testnet = parse(&["--testnet", "--datadir", "d"]);
+    assert!(testnet.official_seeds);
+    assert!(dial_addresses(&testnet).unwrap().is_empty());
+    let local = parse(&["--testnet", "--datadir", "d", "--tanpa-seed-resmi"]);
+    assert!(!local.official_seeds);
+
+    let cases: [(&[&str], ArgError); 3] = [
+        (
+            &[
+                "--regtest",
+                "--datadir",
+                "x",
+                "--seed-resmi",
+                "--tanpa-seed-resmi",
+            ],
+            ArgError::SeedConflict,
+        ),
+        (
+            &[
+                "--regtest",
+                "--datadir",
+                "x",
+                "--seed-resmi",
+                "--seed-resmi",
+            ],
+            ArgError::Duplicate("--seed-resmi"),
+        ),
+        (
+            &[
+                "--testnet",
+                "--datadir",
+                "x",
+                "--tanpa-seed-resmi",
+                "--tanpa-seed-resmi",
+            ],
+            ArgError::Duplicate("--tanpa-seed-resmi"),
+        ),
+    ];
+    for (list, expected) in cases {
+        assert_eq!(parse_args(args(list)), Err(expected), "{list:?}");
+    }
+    assert!(USAGE.contains("--seed-resmi"));
+    assert!(USAGE.contains("--tanpa-seed-resmi"));
+    assert_eq!(
+        ArgError::SeedConflict.to_string(),
+        "--seed-resmi dan --tanpa-seed-resmi tidak boleh digabung"
+    );
 }

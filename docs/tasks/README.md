@@ -106,6 +106,9 @@ Kartu task yang siap dikerjakan disimpan sebagai file `TSK-xxx-*.md` di folder i
 | TSK-M68 | MOD-09 (`send`), MOD-12 (`commands`) | Pratinjau biaya sebelum password dan kirim semua saldo untuk wallet rilis pertama (`plan_sweep`, `Cli::preview`, `Cli::send_spend`, RENCANA_T9 F3 dan F4) | TSK-M16, TSK-M19, TSK-M63 | 🟢 kode dan uji (Q170), rilis wallet 0.3.0 21 November 2026 ([kartu](TSK-M68-pratinjau-kirim-semua.md)) |
 | TSK-M69 | MOD-14 (`app/`, repo zevrigo-explorer) | Aplikasi Zevrigo Explorer untuk Windows dan Android: jendela Tauri 2 ke explorer publik, tanpa IPC (RENCANA_T11) | TSK-M44, TSK-M58 | 🟢 APK dan installer 0.1.0 (Q171, Q172) ([kartu](https://github.com/badakbesi/zevrigo-explorer/blob/main/docs/tasks/TSK-M69-aplikasi-explorer.md)) |
 | TSK-M70 | MOD-12 (`commands`) | Wallet tahan batas laju gerbang RPC: coba lagi saat `429`, riwayat disimpan setiap 100 blok (wallet 0.3.1) | TSK-M41, TSK-M53 | 🟡 kode dan uji (Q176) ([kartu](TSK-M70-wallet-batas-laju.md)) |
+| TSK-M73 | MOD-11 (`daemon`) | Seed resmi bawaan per jaringan: `--seed-resmi` (regtest), `--tanpa-seed-resmi` (testnet, mainnet), didial bersama `--connect` (DEC-43) | TSK-M28, TSK-M45, TSK-M67 | 🟢 kode dan uji (Q189) ([kartu](TSK-M73-seed-bawaan.md)) |
+| TSK-M74 | MOD-06 (`service`, `message`), MOD-11, MOD-17 | Penemuan rekan: protokol `addr`, buku alamat `peers.json`, perlindungan eclipse (DEC-43) | TSK-M73 | ⚪ dirancang |
+| TSK-M75 | MOD-06, MOD-11 | Sambungan masuk opsional: `--p2p-bind`, `--p2p-publik` (alamat yang diumumkan lewat `addr`) (DEC-43) | TSK-M74 | ⚪ dirancang |
 | TSK-M36 | MOD-08, MOD-11, MOD-12 | Metode RPC `scan_mempool`; saldo CLI dan pemilihan koin dengan transaksi tertunda (Spesifikasi RPC 3.9, Wallet Bagian 6) | TSK-M19 | 🟢 selesai ([kartu](TSK-M36-saldo-tertunda.md)) |
 | TSK-M25 | MOD-01 | `enum Network { Mainnet, Testnet, Regtest }` di `params` (Spesifikasi Validasi Bagian 11) | TSK-S02 | 🟢 selesai ([kartu](TSK-M25-primitives-network.md)) |
 

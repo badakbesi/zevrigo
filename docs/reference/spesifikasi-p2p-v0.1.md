@@ -25,7 +25,7 @@ transaksi yang diterima dari rekan tetap diperiksa penuh dengan MOD-04 (V1 sampa
 | Port bawaan | regtest 28_800 · testnet 18_800 · mainnet 8_800 (RPC tetap `x_801`). WebSocket tanpa bawaan (mati); paket publik memakai `x_803` (regtest 28_803) |
 | Alamat dengar bawaan | regtest `/ip4/127.0.0.1/tcp/28800`; dengan `--p2p-ws-port <port>` juga `/ip4/127.0.0.1/tcp/<port>/ws`. Testnet dan mainnet ditetapkan bersama TSK-F06 |
 | Seed di belakang proxy TLS (DEC-33) | Seed mendengar `/ws` tanpa TLS di 127.0.0.1; proxy (cloudflared, Cloudflare Tunnel) memutus TLS dan meneruskan WebSocket ke port itu. Peserta bergabung dengan `--connect /dns4/<nama>/tcp/443/tls/sni/<nama>/ws/p2p/<PeerId seed>`; TLS diperiksa terhadap sertifikat akar `webpki-roots` |
-| Penemuan rekan v0.1 | Hanya alamat yang ditulis operator: opsi `--connect <multiaddr>` boleh berulang (IP atau nama `/dns*`, TCP atau WebSocket). Node menyambung ulang ke alamat itu setiap 10 detik jika putus |
+| Penemuan rekan v0.1 | Alamat yang ditulis operator: opsi `--connect <multiaddr>` boleh berulang (IP atau nama `/dns*`, TCP atau WebSocket), ditambah seed resmi bawaan jaringan itu (DEC-43, TSK-M73; regtest hanya dengan `--seed-resmi`, Bagian 8). Node menyambung ulang ke alamat itu setiap 10 detik jika putus. Pertukaran alamat rekan dan sambungan masuk dari luar menyusul (TSK-M74, TSK-M75) |
 | Batas koneksi | Paling banyak 8 koneksi keluar dan 32 koneksi masuk; satu koneksi per `PeerId` |
 | Koneksi menganggur | Ditutup setelah 300 detik tanpa aliran terbuka. Keepalive `status` setiap 60 detik (Bagian 4) membuat koneksi ke rekan aktif tidak pernah menganggur |
 
@@ -184,7 +184,13 @@ terpotong, chain demo terbelah sekitar 5 jam). Rekan itu dipilih operator sendir
 
 ## 8. Opsi daemon (MOD-11, TSK-M28)
 
-`zevrigo-node --regtest --datadir <folder> [--rpc-port <port>] [--p2p-port <port>] [--p2p-ws-port <port>] [--connect <multiaddr>]…`
+`zevrigo-node --regtest --datadir <folder> [--rpc-port <port>] [--p2p-port <port>] [--p2p-ws-port <port>] [--connect <multiaddr>]… [--seed-resmi | --tanpa-seed-resmi]`
+
+- Seed resmi bawaan (DEC-43, TSK-M73): daftar per jaringan di MOD-11 (`daemon::official_seeds`), lengkap dengan `PeerId`.
+  Regtest: seed jaringan demo `/dns4/demo-seed-p2p.zevrigo.online/tcp/443/tls/sni/demo-seed-p2p.zevrigo.online/ws/p2p/<PeerId>`,
+  hanya bila `--seed-resmi` dipakai (regtest juga dipakai untuk uji lokal). Testnet dan mainnet: selalu, kecuali
+  `--tanpa-seed-resmi`; daftarnya kosong sampai lokasi seed ditetapkan bersama genesis (TSK-F06). Seed didial bersama alamat
+  `--connect` (tanpa duplikat) dan diperlakukan sama: rekan operator, tidak diblokir (Bagian 7, DEC-41).
 
 - `--p2p-port 0` memilih port bebas. Setelah baris `rpc: http://<alamat>`, stdout mencetak satu baris
   `p2p: /ip4/<alamat>/tcp/<port>/p2p/<PeerId>`, sehingga test dan skrip bisa menyambungkan node lain.
@@ -198,7 +204,9 @@ terpotong, chain demo terbelah sekitar 5 jam). Rekan itu dipilih operator sendir
 
 ## 9. Batas v0.1 dan risiko yang diketahui
 
-- Tanpa penemuan rekan otomatis: jaringan uji publik (TSK-F06) butuh seed node dan Kademlia atau daftar rekan bertukar.
+- Seed resmi bawaan ada sejak TSK-M73 (DEC-43). Penemuan rekan (pertukaran alamat lewat protokol sendiri, buku alamat,
+  perlindungan eclipse) dan sambungan masuk opsional dirancang di DEC-43 (TSK-M74, TSK-M75); sampai itu node hanya tersambung
+  ke seed dan alamat `--connect`, sehingga jaringan bergantung pada seed.
 - Perlindungan eclipse dan sybil minimal (batas koneksi, sanksi). Wajib ditinjau ulang sebelum mainnet.
 - Blok dikirim utuh ke setiap rekan; cukup untuk blok 100_000 byte setiap 120 detik, tetapi boros jika rekan banyak.
 - Ring (kode C dan assembly) masuk lewat Noise (DEC-24). Reproducible build (TSK-F10) wajib mengunci versi compiler C.
@@ -250,3 +258,4 @@ terpotong, chain demo terbelah sekitar 5 jam). Rekan itu dipilih operator sendir
 | DEC-33 | Seed publik sementara lewat Cloudflare Tunnel memakai WebSocket libp2p; keepalive `status` 60 detik; nama `/dns*` di-resolve resolver sistem; regtest dulu | 🟢 diputuskan pencipta 11 November 2026 |
 | DEC-10 bagian 12 | Fitur `websocket` libp2p 0.57.1 di MOD-06: +6 paket (libp2p-websocket, futures-rustls, rustls dengan ring, rustls-pki-types, rustls-webpki, webpki-roots), reference/paket-mod06-websocket-v0.1.txt | 🟢 11 November 2026 (konsekuensi DEC-33) |
 | DEC-41 | Aliran yang berakhir sebelum pesan lengkap bukan pelanggaran; rekan `--connect` tidak pernah diblokir (hanya diputus dan disambung ulang); isi mempool (paling banyak 64 transaksi) dikirim ke rekan yang baru tersambung dengan ujung sama atau lebih berat | 🟢 20 November 2026 (insiden jaringan demo, perbaikan diminta pencipta) |
+| DEC-43 | Node tersambung otomatis: seed resmi bawaan per jaringan (regtest hanya dengan `--seed-resmi`), penemuan rekan lewat protokol `addr` sendiri dengan buku alamat dan perlindungan eclipse (tanpa Kademlia, tanpa dependensi baru), sambungan masuk opsional | 🟡 23 November 2026; seed bawaan (TSK-M73), penemuan rekan dan sambungan masuk menyusul |

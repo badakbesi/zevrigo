@@ -16,6 +16,8 @@ Menjalankan daemon node penuh Zevrigo Coin (baik mode arsip maupun *pruned*) yan
 - `Node<S: ChainStore>` (TSK-M18 bagian A): genesis regtest, penerimaan blok V1–V10 lewat MOD-04 lalu `apply_block`, pemeriksaan ulang mempool, template blok untuk miner, dan implementasi `RpcBackend` (MOD-08) untuk 8 metode.
 - Daemon (TSK-M18 bagian B, TSK-M28, TSK-M06 C2, TSK-M45): `zevrigo-node --regtest|--testnet --datadir <folder> [--rpc-port <port>] [--p2p-port <port>] [--p2p-ws-port <port>] [--connect <multiaddr>]...`, chain di `<folder>/<jaringan>/chain.redb`, kunci rekan di `<folder>/<jaringan>/p2p_key`, port bawaan testnet RPC 18801 dan P2P 18800, log ke stderr, server RPC dan P2P di 127.0.0.1 (WebSocket `/ws` hanya jika `--p2p-ws-port`), stdout `rpc: …` lalu `p2p: …` (dan `p2p-ws: …`), `--connect` juga menerima nama `/dns4` dan seed `/tls/sni/<nama>/ws`, berhenti bersih dengan SIGINT atau SIGTERM.
 - Cabang chain, pemilihan chain berdasarkan chainwork, dan reorg (TSK-M27); sinkronisasi header lalu blok, siaran, dan opsi `--p2p-port`/`--connect` (TSK-M28), sesuai [spesifikasi-p2p-v0.1.md](../reference/spesifikasi-p2p-v0.1.md).
+- Seed resmi bawaan (DEC-43, TSK-M73): `official_seeds` per jaringan didial bersama `--connect` (tanpa duplikat) sebagai
+  rekan operator; regtest hanya dengan `--seed-resmi`, testnet dan mainnet selalu kecuali `--tanpa-seed-resmi`.
 - Isi mempool (paling banyak 64 transaksi, urut kedatangan) dikirim sekali per koneksi ke rekan yang `status`-nya menunjukkan
   ujung sama atau lebih berat, sehingga transaksi yang masuk saat rekan terputus tetap sampai (DEC-41, TSK-M67).
 - Batas blok cabang, indeks header, dan catatan blok tidak sah (`NodeLimits`, TSK-M34).
@@ -35,3 +37,4 @@ Menjalankan daemon node penuh Zevrigo Coin (baik mode arsip maupun *pruned*) yan
 - [TSK-M35](../tasks/TSK-M35-cabang-di-disk.md) — 🟢 selesai (badan blok cabang di penyimpanan, presync header)
 - [TSK-M45](https://github.com/badakbesi/zevrigo-demo/blob/main/docs/tasks/TSK-M45-seed-websocket.md) — 🟢 selesai (opsi `--p2p-ws-port`, baris `p2p-ws:`, seed lewat Cloudflare Tunnel)
 - [TSK-M67](../tasks/TSK-M67-p2p-putus-sambung.md) — 🟡 mempool ke rekan yang baru tersambung, log sanksi rekan `--connect` (DEC-41)
+- [TSK-M73](../tasks/TSK-M73-seed-bawaan.md) — 🟢 seed resmi bawaan (`--seed-resmi`, `--tanpa-seed-resmi`, DEC-43)
