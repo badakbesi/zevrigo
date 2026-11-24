@@ -86,6 +86,17 @@ atau saat chain ditulis ulang. Jangan menerima koin demo sebagai pembayaran apa 
   | `peserta-demo-zevrigo-windows-x64.zip` | `d49e0f3338b8f4ba346a816dcb3f3c7e5f6e901d30e19460c8f2451c049dfb79` |
 
   Belum bertanda tangan kode. Bisa juga dibangun sendiri dari repo inti (`cargo build --release --locked`).
+- **Aplikasi Zevrigo Node (node dan penambang dengan antarmuka, DEC-44):** hanya di
+  [badakbesi/zevrigo-demo/releases](https://github.com/badakbesi/zevrigo-demo/releases), tag `zevrigo-demo-gui` (versi 0.1.0,
+  terbit 24 November 2026, dibangun GitHub Actions dari zevrigo-demo commit `9926521` dan repo inti commit `be71d57`), dengan
+  `SHA256SUMS.txt`:
+
+  | Berkas | SHA-256 |
+  |---|---|
+  | `zevrigo-node-0.1.0-x64-setup.exe` | `559d3c7fcd8c20b30fa598a96803829b395607ac9f622c2cb6268452e1dbc734` |
+  | `zevrigo-node-0.1.0-x86_64.AppImage` | `8ebf8c9846d6cc4595fdaa3ecd0f71e8d79a5ade56e2f9a6e1eea938f9992f61` |
+
+  Belum bertanda tangan kode. Aplikasi tidak membuat dan tidak menyimpan kunci rahasia; hadiah tambang ke alamat Zevrigo Wallet.
 
 ## Logo dan nama
 
