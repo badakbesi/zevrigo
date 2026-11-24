@@ -20,9 +20,9 @@ Hanya lima repo ini, di akun GitHub `badakbesi`:
 | Repo | Isi |
 |---|---|
 | [badakbesi/zevrigo](https://github.com/badakbesi/zevrigo) | Repo inti: aturan konsensus, node, miner, CLI, dokumen protokol, dan dokumen ini |
-| [badakbesi/zevrigo-wallet](https://github.com/badakbesi/zevrigo-wallet) | Wallet desktop Windows dan Android; satu-satunya tempat rilis wallet |
+| [badakbesi/zevrigo-wallet](https://github.com/badakbesi/zevrigo-wallet) | Wallet desktop Windows, Linux, dan Android; satu-satunya tempat rilis wallet |
 | [badakbesi/zevrigo-explorer](https://github.com/badakbesi/zevrigo-explorer) | Block explorer |
-| [badakbesi/zevrigo-demo](https://github.com/badakbesi/zevrigo-demo) | Layanan dan paket Docker jaringan demo |
+| [badakbesi/zevrigo-demo](https://github.com/badakbesi/zevrigo-demo) | Layanan dan paket Docker jaringan demo; rilis paket peserta (node, penambang, CLI) |
 | [badakbesi/zevrigo-blog](https://github.com/badakbesi/zevrigo-blog) | Blog resmi |
 
 Riwayat pengembangan sebelum kelima repo dipublikasikan bersih (18 November 2026) tidak dipublikasikan. Kode commit yang
@@ -74,9 +74,18 @@ atau saat chain ditulis ulang. Jangan menerima koin demo sebagai pembayaran apa 
 - **APK Android** ditandatangani sertifikat dengan sidik SHA-256:
   `1575be5a086d9242ec0661108cba4fd71276d0e94a40bca33749f991e9e30c1a`.
   APK dengan sertifikat lain bukan rilis resmi.
-- **Installer Windows** belum bertanda tangan kode; Windows bisa menampilkan peringatan SmartScreen. Jalankan hanya bila SHA-256
-  cocok.
-- **Node, miner, CLI:** belum ada rilis biner; bangun dari repo inti (`cargo build --release --locked`).
+- **Installer Windows** dan **AppImage Linux** belum bertanda tangan kode; Windows bisa menampilkan peringatan SmartScreen.
+  Jalankan hanya bila SHA-256 cocok.
+- **Node, miner, CLI (paket peserta jaringan demo):** hanya di
+  [badakbesi/zevrigo-demo/releases](https://github.com/badakbesi/zevrigo-demo/releases), tag `peserta-demo-zevrigo` (terbit
+  24 November 2026, dibangun GitHub Actions dari repo inti commit `be71d57`), dengan `SHA256SUMS.txt`:
+
+  | Berkas | SHA-256 |
+  |---|---|
+  | `peserta-demo-zevrigo-linux-x86_64.tar.gz` | `8e981cafff7ef3086e40ae3e17bf05272e98147b3c4f1ed826dd977c889bdb6a` |
+  | `peserta-demo-zevrigo-windows-x64.zip` | `d49e0f3338b8f4ba346a816dcb3f3c7e5f6e901d30e19460c8f2451c049dfb79` |
+
+  Belum bertanda tangan kode. Bisa juga dibangun sendiri dari repo inti (`cargo build --release --locked`).
 
 ## Logo dan nama
 
