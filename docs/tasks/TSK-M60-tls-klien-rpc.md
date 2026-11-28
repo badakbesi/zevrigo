@@ -4,7 +4,7 @@
 - **Estimasi:** S · **Ditulis:** Quick, 13 November 2026
 
 ## Tujuan
-Wallet desktop (MOD-15) dan CLI (MOD-12) peserta harus bisa memakai gerbang RPC publik `https://zevrigo-rpc.ratuaurion.store`
+Wallet desktop (MOD-15) dan CLI (MOD-12) peserta harus bisa memakai gerbang RPC publik `https://demo-gerbang-rpc.zevrigo.online`
 (TSK-M53). Klien RPC sebelumnya hanya menerima `http://`.
 
 ## Isi
@@ -18,7 +18,7 @@ Wallet desktop (MOD-15) dan CLI (MOD-12) peserta harus bisa memakai gerbang RPC 
 ## Gerbang (Q128)
 Cargo.lock bertambah tepat 11 paket dengan checksum sama dengan file .crate yang diperiksa Quick, 0 hilang, paket lama yang
 berubah hanya jsonrpsee-http-client dan rustls; `make check-all` 451 test; dari WSL `zevrigo-cli --rpc-url
-https://zevrigo-rpc.ratuaurion.store info` menjawab jaringan regtest dengan tinggi yang sama dengan node seed (selisih paling
+https://demo-gerbang-rpc.zevrigo.online info` menjawab jaringan regtest dengan tinggi yang sama dengan node seed (selisih paling
 banyak 1). Informasi: `https://expired.badssl.com/` ditolak karena sertifikat.
 
 ## Batas

@@ -50,12 +50,9 @@ node (DEC-43): `zevrigo-node --regtest --datadir <folder> --seed-resmi` menyambu
 | Gerbang RPC demo untuk wallet | https://demo-gerbang-rpc.zevrigo.online |
 | Faucet demo | https://demo-faucet.zevrigo.online |
 
-**Alamat lama (peralihan, DEC-42).** Wallet 0.3.1 dan aplikasi Explorer 0.1.0 memakai alamat lama. Alamat ini dilayani pusat
-yang sama sampai wallet dan aplikasi Explorer versi baru terbit, dan paling sedikit 30 hari sesudahnya: explorer
-https://zevrigo.ratuaurion.store, gerbang RPC https://zevrigo-rpc.ratuaurion.store, faucet
-https://zevrigo-faucet.ratuaurion.store, dan seed
-`/dns4/zevrigo-seed.ratuaurion.store/tcp/443/tls/sni/zevrigo-seed.ratuaurion.store/ws/p2p/12D3KooWPdd2VH92LVRwJNrokxKQJCerctJNksErJn5PB53kbEsD`.
-Subdomain lain di `ratuaurion.store` bukan bagian Zevrigo.
+Alamat Zevrigo hanya di domain `zevrigo.online` (dan repo serta rilis di akun GitHub `badakbesi`). Alamat di domain lain
+bukan bagian Zevrigo. Wallet 0.3.1 dan aplikasi Explorer 0.1.0 tidak tersambung lagi sejak 28 November 2026; pakai versi
+terbaru dari halaman unduh blog resmi.
 
 Jaringan dengan genesis lain, atau yang tidak tersambung ke seed resmi, bukan jaringan Zevrigo walaupun memakai kode yang sama.
 Di Proof of Work siapa pun bisa menjalankan node dengan aturan berbeda; chain resmi adalah chain sah dengan kerja kumulatif
