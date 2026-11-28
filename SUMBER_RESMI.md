@@ -74,43 +74,43 @@ atau saat chain ditulis ulang. Jangan menerima koin demo sebagai pembayaran apa 
 - **Installer Windows** dan **AppImage Linux** belum bertanda tangan kode; Windows bisa menampilkan peringatan SmartScreen.
   Jalankan hanya bila SHA-256 cocok.
 - **Node, miner, CLI (paket peserta jaringan demo):** hanya di
-  [badakbesi/zevrigo-demo/releases](https://github.com/badakbesi/zevrigo-demo/releases), tag `peserta-demo-zevrigo` (terbit
-  24 November 2026, dibangun GitHub Actions dari repo inti commit `be71d57`), dengan `SHA256SUMS.txt`:
+  [badakbesi/zevrigo-demo/releases](https://github.com/badakbesi/zevrigo-demo/releases), tag `peserta-demo-zevrigo` (terbit 24 November 2026, diperbarui 28 November 2026: zevrigo-demo commit `a981f39`, repo inti commit `661781a`
+  seed regtest baru), dengan `SHA256SUMS.txt`:
 
   | Berkas | SHA-256 |
   |---|---|
-  | `peserta-demo-zevrigo-linux-x86_64.tar.gz` | `8e981cafff7ef3086e40ae3e17bf05272e98147b3c4f1ed826dd977c889bdb6a` |
-  | `peserta-demo-zevrigo-windows-x64.zip` | `d49e0f3338b8f4ba346a816dcb3f3c7e5f6e901d30e19460c8f2451c049dfb79` |
+  | `peserta-demo-zevrigo-linux-x86_64.tar.gz` | `026618f5b1708e98a5fcca6ef5d9f084033ad52b8e72eb48f5211716f367eca1` |
+  | `peserta-demo-zevrigo-windows-x64.zip` | `54184ddccf78dc058491f7c4f68bb576dca3e35ed4c50166f31a5554c4bc909d` |
 
   Belum bertanda tangan kode. Bisa juga dibangun sendiri dari repo inti (`cargo build --release --locked`).
 - **Aplikasi Zevrigo Node (node dan penambang dengan antarmuka, DEC-44):** hanya di
   [badakbesi/zevrigo-demo/releases](https://github.com/badakbesi/zevrigo-demo/releases), tag `zevrigo-demo-gui` (versi 0.1.0,
-  terbit 24 November 2026, dibangun GitHub Actions dari zevrigo-demo commit `9926521` dan repo inti commit `be71d57`), dengan
-  `SHA256SUMS.txt`:
+  terbit 24 November 2026, diperbarui 28 November 2026: zevrigo-demo commit `a981f39` dan repo inti commit `661781a`,
+  seed regtest baru), dengan `SHA256SUMS.txt`:
 
   | Berkas | SHA-256 |
   |---|---|
-  | `zevrigo-node-0.1.0-x64-setup.exe` | `559d3c7fcd8c20b30fa598a96803829b395607ac9f622c2cb6268452e1dbc734` |
-  | `zevrigo-node-0.1.0-x86_64.AppImage` | `8ebf8c9846d6cc4595fdaa3ecd0f71e8d79a5ade56e2f9a6e1eea938f9992f61` |
+  | `zevrigo-node-0.1.0-x64-setup.exe` | `0a48a7f4d9fcd16fdd35219298fae40595db9e50acc62b8b7ee14cd60dabb141` |
+  | `zevrigo-node-0.1.0-x86_64.AppImage` | `d764310e599d56dd4e1059aee396f25b363784575989c70a76118db3adb4c3a2` |
 
   Belum bertanda tangan kode. Aplikasi tidak membuat dan tidak menyimpan kunci rahasia; hadiah tambang ke alamat Zevrigo Wallet.
 - **Aplikasi Zevrigo Node untuk Android (mode VPS, DEC-46):** hanya di
   [badakbesi/zevrigo-demo/releases](https://github.com/badakbesi/zevrigo-demo/releases), tag `demo-zevrigo-node-android` (versi
-  0.1.0, pre-release, dari zevrigo-demo commit `bd9b381`):
+  0.1.0, pre-release, diperbarui 28 November 2026 dari zevrigo-demo commit `a981f39`, paket VPS dengan seed regtest baru):
 
   | Berkas | SHA-256 |
   |---|---|
-  | `zevrigo-node-0.1.0-android.apk` | `ed00b3db524276bfb9628000e5072d202ee8915191631e29f654566a6cd418d2` |
+  | `zevrigo-node-0.1.0-android.apk` | `b5570bbb5c3b3ed20e543b7c2da6a3f2876fadc4c2de752cd2eb5f6969db96b1` |
 
   Ditandatangani sertifikat APK resmi di atas. Aplikasi memasang dan mengendalikan node di VPS milik pengguna lewat SSH, dari
   paket VPS resmi berikut; SHA-256 paket tertanam di aplikasi. Kunci SSH VPS disimpan di HP, terenkripsi kata sandi aplikasi.
 - **Paket VPS Zevrigo Node:** hanya di [badakbesi/zevrigo-demo/releases](https://github.com/badakbesi/zevrigo-demo/releases), tag
-  `demo-zevrigo-vps` (pre-release, dibangun GitHub Actions dari zevrigo-demo commit `faa9c3a` dan repo inti commit `be71d57`),
-  dengan `SHA256SUMS.txt`:
+  `demo-zevrigo-vps` (pre-release, diperbarui 28 November 2026: zevrigo-demo commit `a981f39` dan repo inti commit `661781a`, seed
+  regtest baru), dengan `SHA256SUMS.txt`:
 
   | Berkas | SHA-256 |
   |---|---|
-  | `demo-zevrigo-vps-linux-x86_64.tar.gz` | `7d90a27fc6e7cd67eda944291a77fdb9cf1fc13ba7b0765a3e1a4cffb333306b` |
+  | `demo-zevrigo-vps-linux-x86_64.tar.gz` | `6d9079e2bbb8b41e418fe813f5ba0a7b47107650a2e5bbeabc3e928066249186` |
 
   Belum bertanda tangan kode; dipasang dan diperbarui aplikasi Android hanya bila SHA-256 cocok.
 
