@@ -8,7 +8,7 @@ Zevrigo terdiri dari **pusat publik tunggal** dan **bagian desentral**:
 
 | Pusat publik tunggal | Desentral |
 |---|---|
-| Satu titik yang sama dan terbuka untuk semua orang: repo resmi, rilis resmi, seed resmi, explorer, gerbang RPC, faucet, blog, dan domain resmi (saat ini di satu VPS, DEC-38) | Node, penambang, dan wallet milik peserta, di komputer siapa pun; kunci dipegang pemiliknya sendiri |
+| Satu titik yang sama dan terbuka untuk semua orang: repo resmi, rilis resmi, seed resmi, explorer, gerbang RPC, faucet, blog, dan domain resmi (satu VPS resmi, DEC-38, DEC-48) | Node, penambang, dan wallet milik peserta, di komputer siapa pun; kunci dipegang pemiliknya sendiri |
 
 Pusat tidak memegang kunci siapa pun dan tidak bisa mengubah aturan chain. Tidak ada kunci admin, tombol pembekuan, atau hak
 istimewa di protokol untuk pihak mana pun, termasuk pencipta ([AGENTS.md](AGENTS.md)).
@@ -34,13 +34,13 @@ disebut dokumen sebelum tanggal itu merujuk riwayat tersebut.
 |---|---|---|
 | Mainnet | Belum diluncurkan | Ditetapkan saat peluncuran |
 | Testnet | Belum diluncurkan | Ditetapkan saat peluncuran (TSK-F06); nilai di kode sekarang sementara |
-| Regtest (jaringan demo publik) | Dimulai ulang 19 November 2026 (chain sebelumnya dihapus); koin demo tidak bernilai | `8b9eb3187250bbdfe1577ebcb668c30003213a9ee6a4424427b08e38da364dab` |
+| Regtest (jaringan demo publik) | Dimulai ulang 28 November 2026 (chain sebelumnya dihapus, seed baru); koin demo tidak bernilai | `8b9eb3187250bbdfe1577ebcb668c30003213a9ee6a4424427b08e38da364dab` |
 
 Genesis regtest sama di setiap komputer, jadi jaringan demo resmi dikenali dari seed resminya. Alamat ini juga tertanam di
 node (DEC-43): `zevrigo-node --regtest --datadir <folder> --seed-resmi` menyambung ke sana tanpa perlu disalin.
 
 ```
-/dns4/demo-seed-p2p.zevrigo.online/tcp/443/tls/sni/demo-seed-p2p.zevrigo.online/ws/p2p/12D3KooWABPBsu8gZWtL7bbeEPjg6gwRPDbp3GZidpTeUC95rRDo
+/dns4/demo-seed-p2p.zevrigo.online/tcp/443/tls/sni/demo-seed-p2p.zevrigo.online/ws/p2p/12D3KooWPdd2VH92LVRwJNrokxKQJCerctJNksErJn5PB53kbEsD
 ```
 
 | Layanan | Alamat |
@@ -54,14 +54,14 @@ node (DEC-43): `zevrigo-node --regtest --datadir <folder> --seed-resmi` menyambu
 yang sama sampai wallet dan aplikasi Explorer versi baru terbit, dan paling sedikit 30 hari sesudahnya: explorer
 https://zevrigo.ratuaurion.store, gerbang RPC https://zevrigo-rpc.ratuaurion.store, faucet
 https://zevrigo-faucet.ratuaurion.store, dan seed
-`/dns4/zevrigo-seed.ratuaurion.store/tcp/443/tls/sni/zevrigo-seed.ratuaurion.store/ws/p2p/12D3KooWABPBsu8gZWtL7bbeEPjg6gwRPDbp3GZidpTeUC95rRDo`.
+`/dns4/zevrigo-seed.ratuaurion.store/tcp/443/tls/sni/zevrigo-seed.ratuaurion.store/ws/p2p/12D3KooWPdd2VH92LVRwJNrokxKQJCerctJNksErJn5PB53kbEsD`.
 Subdomain lain di `ratuaurion.store` bukan bagian Zevrigo.
 
 Jaringan dengan genesis lain, atau yang tidak tersambung ke seed resmi, bukan jaringan Zevrigo walaupun memakai kode yang sama.
 Di Proof of Work siapa pun bisa menjalankan node dengan aturan berbeda; chain resmi adalah chain sah dengan kerja kumulatif
 terbanyak menurut aturan di repo inti, tanpa checkpoint.
 
-**Risiko jaringan demo (diumumkan 19 November 2026).** Jaringan demo memakai Proof of Work regtest yang sangat murah. Siapa pun yang
+**Risiko jaringan demo (diumumkan 19 November 2026, tetap berlaku sesudah mulai ulang 28 November 2026).** Jaringan demo memakai Proof of Work regtest yang sangat murah. Siapa pun yang
 menjalankan node dan penambang bisa membuat chain lebih panjang dan menulis ulang riwayat jaringan demo. Itu disengaja agar
 siapa pun bisa mencoba menambang tanpa alat khusus. Koin demo tidak bernilai, tidak bisa dijual, dan bisa hilang saat reset
 atau saat chain ditulis ulang. Jangan menerima koin demo sebagai pembayaran apa pun.

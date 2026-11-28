@@ -298,7 +298,7 @@ fn official_seeds_only_when_asked_on_regtest() {
     let seed = REGTEST_SEEDS.first().copied().unwrap_or_default();
     assert_eq!(
         seed,
-        "/dns4/demo-seed-p2p.zevrigo.online/tcp/443/tls/sni/demo-seed-p2p.zevrigo.online/ws/p2p/12D3KooWABPBsu8gZWtL7bbeEPjg6gwRPDbp3GZidpTeUC95rRDo"
+        "/dns4/demo-seed-p2p.zevrigo.online/tcp/443/tls/sni/demo-seed-p2p.zevrigo.online/ws/p2p/12D3KooWPdd2VH92LVRwJNrokxKQJCerctJNksErJn5PB53kbEsD"
     );
     assert_eq!(official_seeds(Network::Regtest), REGTEST_SEEDS);
     assert!(official_seeds(Network::Testnet).is_empty());
